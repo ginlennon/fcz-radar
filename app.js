@@ -33,7 +33,7 @@ function rel(iso) {
 }
 const initials = (n) => String(n || '?').replace(/[«»"]/g, '').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 function hue(s) { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
-const avatar = (n) => `<span class="avatar" style="background:hsl(${hue(n)} 50% 40%)">${esc(initials(n))}</span>`;
+const avatar = (n) => `<span class="avatar">${esc(initials(n))}</span>`;
 const isFczFm = (id) => S.fm && id === S.fm.teamId;
 const mono = (big) => `<span class="mono${big ? ' big' : ''}" aria-label="FCZ">Z</span>`; // no club logo, by design
 const crest = (id) => (isFczFm(id) ? mono() : id ? `<img class="crest" loading="lazy" alt="" src="https://images.fotmob.com/image_resources/logo/teamlogo/${id}_small.png" onerror="this.style.visibility='hidden'">` : '');
@@ -61,14 +61,19 @@ async function getJSON(p) {
 }
 let dbReady = null;
 async function loadSmall() {
-  const [home, forum, arch, fm, meta] = await Promise.all(
+  const keys = ['home', 'forum', 'arch', 'fm', 'meta'];
+  const got = await Promise.all(
     ['data/dbfcz_home.json', 'data/forum.json', 'data/forum_archive.json', 'data/fotmob.json', 'data/meta.json']
       .map((p) => getJSON(p).catch(() => null)));
-  Object.assign(S, { home, forum, arch, fm, meta });
+  keys.forEach((k, i) => { if (got[i]) S[k] = got[i]; }); // a failed refetch never blanks good data
 }
 function loadDb() {
-  dbReady = getJSON('data/db.json').then((db) => { S.db = db; buildIndexes(); addProvisional(); buildIndexes(); searchIndex = null; }).catch(() => { S.db = null; });
+  dbReady = getJSON('data/db.json').then((db) => { S.db = db; buildIndexes(); }).catch(() => { S.db = null; });
   return dbReady;
+}
+function integrate() { // needs db + fotmob; safe to call repeatedly
+  if (!S.db) return;
+  addProvisional(); buildIndexes(); searchIndex = null;
 }
 async function playerSeasons() {
   if (!S.ps) S.ps = await getJSON('data/player_seasons.json').catch(() => ({}));
@@ -92,18 +97,18 @@ function buildIndexes() {
   IX.oppSorted = Object.entries(IX.byOpp).map(([id, ms]) => [+id, ms.length]).sort((a, b) => b[1] - a[1]);
   IX.teamByNorm = Object.entries(db.teams).map(([id, n]) => [+id, norm(n)]);
 }
+const FAKE = { n: -1000 };
 // dbFCZ lags a few weeks behind: bridge with finished FotMob results, flagged "vorläufig"
 function addProvisional() {
   if (!S.fm || !S.db) return;
   const last = S.db.matches[S.db.matches.length - 1]?.[1] || '';
   const cur = S.db.seasons[S.db.seasons.length - 1]?.id;
   const compOf = (t = '') => (/super league|challenge/i.test(t) ? 'L' : /cup/i.test(t) && !/europa|conference|champions|uefa/i.test(t) ? 'C' : /friendl|test/i.test(t) ? 'F' : 'I');
-  let fake = -1000;
   for (const f of S.fm.fixtures) {
-    if (!f.finished || f.hs == null) continue;
+    if (!f.finished || f.hs == null || IX.prov.has(-f.id)) continue;
     const d = zurichISO(new Date(f.utc));
     if (d <= last) continue;
-    const tid = (fid, name) => { if (isFczFm(fid)) return FCZ; const t = findTeam(name); if (t) return t; const id = fake--; S.db.teams[id] = name; return id; };
+    const tid = (fid, name) => { if (isFczFm(fid)) return FCZ; const t = findTeam(name); if (t) return t; const id = FAKE.n--; S.db.teams[id] = name; return id; };
     const row = [-f.id, d, cur, tid(f.homeId, f.home), tid(f.awayId, f.away), f.hs, f.as, compOf(f.tournament), `${f.tournament || ''}`, 'vorläufig'];
     S.db.matches.push(row); IX.prov.set(row[0], f);
   }
@@ -146,6 +151,9 @@ function wdlBar(o, compact) {
   <div class="legend num"><span><b>${o.W}</b> S</span><span><b>${o.D}</b> U</span><span><b>${o.L}</b> N</span>${compact ? '' : `<span class="muted">${o.gf}:${o.ga} Tore</span>`}<span class="muted">${o.n} Sp.</span></div>`;
 }
 const LET = { W: 'S', D: 'U', L: 'N', N: '·' };
+const fmScore = (f) => String(f.score || '').replace(/\s*-\s*/, ':');
+const SIG = { I: 0, C: 1, L: 2, P: 3, LC: 3, O: 4, F: 5 };
+const wdlRow = (label, o) => `<div class="wrow"><span class="wl">${label}</span><div class="wb">${wdlBar(o, true)}</div></div>`;
 function matchItem(m, { showSeason = true, pre = '' } = {}) {
   const r = res(m);
   const extra = m[9] ? ` <span class="pill${m[9] === 'vorläufig' ? ' warn' : ''}">${esc(m[9])}</span>` : '';
@@ -242,20 +250,27 @@ function miniTable() {
   const lo = Math.max(0, Math.min(i - 2, t.length - 5));
   return card('Tabelle', tableHTML(t.slice(lo, lo + 5), true), '<a href="#/saison">ganze Tabelle</a>');
 }
+function histItem(m) {
+  const r = res(m);
+  return `<li><a class="item hist e${r.r}" href="#/spiel/${m[0]}"><span class="yr num">${m[1].slice(0, 4)}</span>
+    <span class="grow"><div class="t">${esc(teamName(m[3]))} – ${esc(teamName(m[4]))}</div><div class="s">${esc(m[8] || COMP[m[7]])}${m[9] ? ' · ' + esc(m[9]) : ''}</div></span>
+    <span class="score">${m[5] ?? '–'}:${m[6] ?? '–'}</span></a></li>`;
+}
 function onThisDay() {
-  if (!S.db) return loadingCard('Heute vor … Jahren');
+  if (!S.db) return loadingCard('An diesem Tag');
   const today = zurichISO(); const md = today.slice(4); const yr = +today.slice(0, 4);
   let ms = S.db.matches.filter((m) => m[1]?.endsWith(md) && +m[1].slice(0, 4) < yr);
-  let title = 'Heute vor … Jahren';
+  const dl = new Date(today + 'T12:00:00').toLocaleDateString('de-CH', { day: 'numeric', month: 'long' });
+  let title = `${dl} in der Geschichte`;
   if (!ms.length) {
     const days = new Set([-3, -2, -1, 1, 2, 3].map((k) => zurichISO(new Date(Date.now() + k * 86400e3)).slice(4)));
     ms = S.db.matches.filter((m) => m[1] && days.has(m[1].slice(4)));
     title = 'Diese Woche in der Geschichte';
   }
-  ms = ms.slice().sort((a, b) => (b[1] < a[1] ? -1 : 1));
+  ms = ms.slice().sort((a, b) => (SIG[a[7]] ?? 9) - (SIG[b[7]] ?? 9) || (a[1] < b[1] ? -1 : 1));
   const cur = S.home?.today;
-  const lead = cur?.text ? `<a class="lead" href="${cur.spiel_id && IX.matchById.get(cur.spiel_id) ? '#/spiel/' + cur.spiel_id : dbfczUrl('spiel', cur.spiel_id)}"><b>${esc(cur.title)}</b>${esc(cur.text)}</a>` : '';
-  return card(title, `${lead}<ul class="list">${ms.slice(0, 5).map((m) => matchItem(m, { pre: `<div class="s">vor ${yr - +m[1].slice(0, 4)} Jahren</div>` })).join('')}</ul>
+  const lead = cur?.text ? `<a class="lead" href="${cur.spiel_id && IX.matchById.get(cur.spiel_id) ? '#/spiel/' + cur.spiel_id : dbfczUrl('spiel', cur.spiel_id)}"><b>${esc(cur.title)} · Tipp von dbFCZ</b>${esc(cur.text)}</a>` : '';
+  return card(title, `${lead}<ul class="list">${ms.slice(0, 5).map(histItem).join('')}</ul>
     ${ms.length > 5 ? `<a class="ghost morebtn" href="#/archiv?tag=${md.slice(1)}">alle ${ms.length} Spiele an diesem Tag</a>` : ''}`);
 }
 function birthdays() {
@@ -278,8 +293,8 @@ function forumPulse() {
 function lastResult() {
   const l = lastFixtures(5); if (!l.length) return '';
   const f = l[l.length - 1];
-  return card('Letztes Spiel', `<a class="item" target="_blank" rel="noopener" href="${esc(f.url)}">${crest(f.homeId)}<span class="grow"><div class="t">${esc(f.home)} – ${esc(f.away)}</div><div class="s">${new Date(f.utc).toLocaleDateString('de-CH')} · ${esc(f.tournament || '')}</div></span><span class="score big">${esc(f.score || '')}</span>${crest(f.awayId)}</a>
-    <div class="row between" style="margin-top:4px"><span class="s muted">Form (neueste rechts)</span><span class="form">${l.map((x) => `<span class="badge ${fmRes(x)}" title="${esc(x.home + ' ' + x.score + ' ' + x.away)}">${LET[fmRes(x)]}</span>`).join('')}</span></div>`);
+  const dots = `<span class="dots" title="Form, neueste rechts">${l.map((x) => `<i class="${fmRes(x)}" title="${esc(x.home + ' ' + fmScore(x) + ' ' + x.away)}"></i>`).join('')}</span>`;
+  return card('Letztes Spiel', `<a class="item" target="_blank" rel="noopener" href="${esc(f.url)}">${crest(f.homeId)}<span class="grow"><div class="t">${esc(f.home)} – ${esc(f.away)}</div><div class="s">${new Date(f.utc).toLocaleDateString('de-CH')} · ${esc(f.tournament || '')}</div></span><span class="score big">${esc(fmScore(f))}</span>${crest(f.awayId)}</a>`, dots);
 }
 async function mastodon(seq) {
   try {
@@ -294,13 +309,91 @@ async function mastodon(seq) {
   } catch { const el = $('#toots'); if (el) el.innerHTML = '<div class="empty">Mastodon gerade nicht erreichbar</div>'; }
 }
 function renderHeute(seq) {
-  view.innerHTML = heroNext() + lastResult() + miniTable()
+  view.innerHTML = heroNext() + lastResult() + miniTable() + quizCard()
     + group('Geschichte') + onThisDay() + birthdays()
     + group('Community') + forumPulse()
     + card('Neu bei @dbFCZ', '<div id="toots"><div class="skel"></div><div class="skel short"></div></div>', `<a href="https://mastodon.social/@dbfcz" target="_blank" rel="noopener">Mastodon</a>`) + foot();
   tickCountdown(); timer = setInterval(tickCountdown, 1000);
   mastodon(seq);
 }
+
+// ---------------------------------------------------------------- Tagesquiz (same quiz for everyone, seeded by date)
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+let QUIZ = null;
+function buildQuiz() {
+  const today = zurichISO();
+  if (QUIZ?.date === today) return QUIZ;
+  const rnd = mulberry32(+today.replace(/-/g, ''));
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+  const shuffle = (arr) => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+  const cutoff = `${+today.slice(0, 4) - 1}${today.slice(4)}`;
+  const pool = S.db.matches.filter((m) => m[0] > 0 && m[7] !== 'F' && m[5] != null && m[1] < cutoff);
+  const qs = [];
+  // 1) result of a match from this day in history
+  let cand = pool.filter((m) => m[1].slice(5) === today.slice(5));
+  if (!cand.length) { const days = new Set([-3, -2, -1, 1, 2, 3].map((k) => zurichISO(new Date(Date.now() + k * 86400e3)).slice(5))); cand = pool.filter((m) => days.has(m[1].slice(5))); }
+  if (!cand.length) cand = pool;
+  const m = pick(cand); const truth = `${m[5]}:${m[6]}`;
+  const opts = new Set([truth]);
+  while (opts.size < 4) { const o = pick(pool); opts.add(`${o[5]}:${o[6]}`); }
+  qs.push({ q: `${teamName(m[3])} – ${teamName(m[4])} am ${fmtD(m[1])}, ${m[8] || COMP[m[7]]}: Wie ging's aus?`, opts: shuffle([...opts]), a: truth, link: `#/spiel/${m[0]}` });
+  // 2) who played more competitive matches
+  const curSid = S.db.seasons[S.db.seasons.length - 1].id;
+  const top = S.db.players.filter((p) => p[8] !== curSid).slice(0, 200);
+  let A, B;
+  for (let i = 0; i < 200; i++) { A = pick(top); B = pick(top); const r = Math.min(A[2], B[2]) / Math.max(A[2], B[2]); if (A !== B && r > 0.6 && r < 0.95) break; }
+  const more = A[2] > B[2] ? A : B;
+  qs.push({ q: 'Wer hat mehr Pflichtspiele für den FCZ?', opts: [A[1], B[1]], a: more[1], link: `#/spieler/${more[0]}`, note: `${A[1]} ${A[2]} · ${B[1]} ${B[2]}` });
+  // 3) all-time balance against an opponent
+  const opp = pick(IX.oppSorted.filter(([id]) => id > 0).slice(0, 40))[0];
+  const o = summarize(IX.byOpp[opp].filter((x) => x[0] > 0 && x[7] !== 'F' && x[1] < cutoff));
+  const verdict = o.W > o.L ? 'positiv' : o.W < o.L ? 'negativ' : 'ausgeglichen';
+  qs.push({ q: `Pflichtspiel-Bilanz gegen ${teamName(opp)}?`, opts: ['positiv', 'ausgeglichen', 'negativ'], a: verdict, link: `#/gegner/${opp}`, note: `${o.W}S ${o.D}U ${o.L}N` });
+  QUIZ = { date: today, qs };
+  return QUIZ;
+}
+function quizState() {
+  const st = store.get('quiz', { date: null, answers: [], streak: 0, best: 0, lastDone: null });
+  if (st.date !== zurichISO()) { st.date = zurichISO(); st.answers = []; }
+  return st;
+}
+function quizCard() {
+  if (!S.db) return loadingCard('Tagesquiz');
+  const Q = buildQuiz(); const st = quizState();
+  const n = st.answers.length; const right = st.answers.filter((a, i) => a === Q.qs[i].a).length;
+  const rows = Q.qs.map((q, i) => {
+    const ans = st.answers[i]; const done = ans != null;
+    if (!done && i !== n) return '';
+    return `<div class="qz"><div class="qq"><span class="pill">${i + 1}/3</span> ${esc(q.q)}</div><div class="qo">${q.opts.map((o) => {
+      const cls = done ? (o === q.a ? 'ok' : o === ans ? 'bad' : 'dim') : '';
+      return `<button type="button" class="qbtn ${cls}" ${done ? 'disabled' : `data-quiz="${i}" data-a="${esc(o)}"`}>${esc(o)}</button>`; }).join('')}</div>
+      ${done ? `<div class="s">${ans === q.a ? 'Richtig!' : 'Leider nein.'}${q.note ? ' ' + esc(q.note) + '.' : ''} <a href="${q.link}">mehr</a></div>` : ''}</div>`;
+  }).join('');
+  const fin = n === 3 ? `<div class="row between qfin"><b>${right}/3 · Serie ${st.streak} ${st.streak > 1 ? 'Tage' : 'Tag'}</b><button type="button" class="btn" data-quiz-share>${ICON.share} Teilen</button></div><div class="s muted">Morgen gibt es ein neues Quiz.</div>` : '';
+  return `<section class="card quiz" id="quiz"><h2><span>Tagesquiz</span><span class="pill">${n}/3</span></h2>${rows}${fin}</section>`;
+}
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-quiz]');
+  if (b) {
+    const st = quizState(); const i = +b.dataset.quiz;
+    if (st.answers.length !== i) return;
+    st.answers.push(b.dataset.a);
+    if (st.answers.length === 3) {
+      const y = zurichISO(new Date(Date.now() - 86400e3));
+      st.streak = st.lastDone === y ? st.streak + 1 : st.lastDone === st.date ? st.streak : 1;
+      st.lastDone = st.date; st.best = Math.max(st.best || 0, st.streak);
+    }
+    store.set('quiz', st);
+    const el = $('#quiz'); if (el) el.outerHTML = quizCard();
+    return;
+  }
+  if (e.target.closest('[data-quiz-share]')) {
+    const st = quizState(); const Q = buildQuiz();
+    const sq = Q.qs.map((q, i) => (st.answers[i] === q.a ? '🟦' : '⬜')).join('');
+    const text = `FCZ Radar Tagesquiz ${fmtD(st.date).slice(0, 6)} ${sq} · Serie ${st.streak}`;
+    try { if (navigator.share) await navigator.share({ text, url: location.origin + location.pathname }); else { await navigator.clipboard.writeText(text + ' ' + location.origin + location.pathname); e.target.closest('button').textContent = 'kopiert'; } } catch { /* cancelled */ }
+  }
+});
 
 // ---------------------------------------------------------------- Saison (FotMob)
 function renderSaison(q) {
@@ -317,7 +410,7 @@ function renderSaison(q) {
     const up = fm.fixtures.filter((f) => !f.finished), done = fm.fixtures.filter((f) => f.finished).reverse();
     const li = (f) => `<li><a class="item" target="_blank" rel="noopener" href="${esc(f.url)}">${f.finished ? `<span class="badge ${fmRes(f)}">${LET[fmRes(f)]}</span>` : `<span class="pill">${new Date(f.utc).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' })}</span>`}
       <span class="grow"><div class="t">${esc(f.home)} – ${esc(f.away)}</div><div class="s">${new Date(f.utc).toLocaleString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Zurich' })} · ${esc(f.tournament || '')}</div></span>
-      <span class="score">${f.finished ? esc(f.score) : ''}</span>${ICON.ext}</a></li>`;
+      <span class="score">${f.finished ? esc(fmScore(f)) : ''}</span>${ICON.ext}</a></li>`;
     body = card('Kommende Spiele', `<ul class="list">${up.map(li).join('') || '<div class="empty">Keine</div>'}</ul><a class="btn primary morebtn" href="${fm.ics.replace(/^https:/, 'webcal:')}">${ICON.cal} Spielplan im Kalender abonnieren</a>`)
       + card('Gespielt', `<ul class="list">${done.map(li).join('')}</ul>`);
   } else if (tab === 'kader') {
@@ -378,7 +471,7 @@ function renderArchiv(q) {
       <section class="card"><ul class="list">${ms.slice(0, page * 40).map((m) => matchItem(m)).join('') || '<div class="empty">Keine Spiele für diese Filter</div>'}</ul>
       ${ms.length > page * 40 ? `<a class="btn morebtn" href="${(() => { const p = new URLSearchParams(q); p.set('p', page + 1); return '#/archiv?' + p; })()}">mehr laden</a>` : ''}</section>`;
   }
-  view.innerHTML = `<h1 class="page-title">Archiv</h1><p class="sub">${fmtN(S.db.matches.length)} Spiele seit ${fmtD(S.db.matches[0][1])} · Quelle dbFCZ</p><div class="chips" style="margin-top:10px">${modeChips}</div>${body}${foot()}`;
+  view.innerHTML = `<h1 class="page-title">Archiv</h1><p class="sub gap">${fmtN(S.db.matches.length)} Spiele seit ${fmtD(S.db.matches[0][1])} · Quelle dbFCZ</p><div class="chips" style="margin-top:10px">${modeChips}</div>${body}${foot()}`;
 }
 function rankTimeline() {
   const ss = S.db.seasons.filter((s) => s.rank);
@@ -443,11 +536,9 @@ function renderGegner(id) {
   const decRows = Object.entries(byDec).sort().map(([k, v]) => { const o = summarize(v); return `<tr><td></td><td>${k}er</td><td>${o.n}</td><td>${o.W}</td><td>${o.D}</td><td>${o.L}</td><td>${o.gf}:${o.ga}</td></tr>`; }).join('');
   const name = teamName(id);
   const nf2 = (S.fm?.fixtures || []).find((f) => !f.finished && findTeam(isFczFm(f.homeId) ? f.away : f.home) === id);
-  view.innerHTML = `<h1 class="page-title">FCZ vs ${esc(name)}</h1><p class="sub">${ms.length} Spiele · erstes ${fmtD(ms[0][1])} · letztes ${fmtD(ms[ms.length - 1][1])}</p><br>
-    ${nf2 ? card('Nächstes Duell', `<div class="row between"><b>${esc(nf2.home)} – ${esc(nf2.away)}</b><span class="pill">${new Date(nf2.utc).toLocaleDateString('de-CH')}</span></div>`) : ''}
-    ${card('Pflichtspiele', wdlBar(summarize(P)))}
-    <div class="grid2">${card('Heim', wdlBar(home, true))}${card('Auswärts', wdlBar(away, true))}</div>
-    ${card('Extreme', `<ul class="list">${bw ? matchItem(bw) : ''}${bl && bl !== bw ? matchItem(bl) : ''}</ul>`)}
+  view.innerHTML = `<h1 class="page-title">FCZ vs ${esc(name)}</h1><p class="sub gap">${ms.length} Spiele · erstes ${fmtD(ms[0][1])} · letztes ${fmtD(ms[ms.length - 1][1])}${nf2 ? ` · <b>nächstes am ${new Date(nf2.utc).toLocaleDateString('de-CH')}</b>` : ''}</p>
+    ${card('Bilanz in Pflichtspielen', wdlRow('Total', summarize(P)) + wdlRow('Heim', home) + wdlRow('Auswärts', away))}
+    ${card('Höchster Sieg', `<ul class="list">${bw && res(bw).r === 'W' ? matchItem(bw) : '<div class="empty">noch keiner</div>'}</ul>`) + card('Höchste Niederlage', `<ul class="list">${bl && res(bl).r === 'L' ? matchItem(bl) : '<div class="empty">noch keine</div>'}</ul>`)}
     ${card('Nach Jahrzehnt (alle Spiele)', `<table class="t"><thead><tr><th></th><th>Jahrzehnt</th><th>Sp</th><th>S</th><th>U</th><th>N</th><th>Tore</th></tr></thead><tbody>${decRows}</tbody></table>`)}
     ${card('Letzte Duelle', `<ul class="list">${ms.slice(-10).reverse().map((m) => matchItem(m)).join('')}</ul><a class="ghost morebtn" href="#/archiv?o=${id}">alle ${ms.length} Spiele</a>`, id > 0 ? `<a href="${dbfczUrl('team', id)}" target="_blank" rel="noopener">dbFCZ</a>` : '')}
     ${foot()}`;
@@ -462,7 +553,7 @@ async function renderSaisonArchiv(sid, seq) {
   const stand = st.length ? `<table class="t"><thead><tr><th>#</th><th>Team</th><th>Sp</th><th class="hm">S</th><th class="hm">U</th><th class="hm">N</th><th>Tore</th><th>Pkt</th></tr></thead><tbody>
     ${st.map((r) => `<tr class="${r[1] === FCZ ? 'me' : ''}"><td>${r[0] ?? ''}</td><td><span class="ell">${r[1] === FCZ ? 'FCZ' : `<a href="#/gegner/${r[1]}">${esc(teamName(r[1]))}</a>`}</span>${r[8] ? ` <span class="pill">${esc(r[8])}</span>` : ''}</td><td>${r[2]}</td><td class="hm">${r[3]}</td><td class="hm">${r[4]}</td><td class="hm">${r[5]}</td><td>${esc(r[6])}</td><td><b>${r[7]}</b></td></tr>`).join('')}</tbody></table>` : '<div class="empty">Keine Tabelle erfasst</div>';
   view.innerHTML = `<div class="row between"><a class="ghost" href="${prev ? '#/saisonarchiv/' + prev.id : '#/archiv?m=saisons'}">‹ ${esc(prev?.label || 'Saisons')}</a><a class="ghost" href="${next ? '#/saisonarchiv/' + next.id : '#/archiv?m=saisons'}">${esc(next?.label || 'Saisons')} ›</a></div>
-    <h1 class="page-title">Saison ${esc(s.label)}</h1><p class="sub">${esc(s.league || '')}${s.rank ? ` · Rang ${s.rank}` : ''}${s.note ? ` · ${esc(s.note)}` : ''}</p><br>
+    <h1 class="page-title">Saison ${esc(s.label)}</h1><p class="sub gap">${esc(s.league || '')}${s.rank ? ` · Rang ${s.rank}` : ''}${s.note ? ` · ${esc(s.note)}` : ''}</p>
     ${card('Bilanz (ohne Testspiele)', wdlBar(summarize(ms.filter((m) => m[7] !== 'F'))))}
     ${card('Tabelle', stand)}
     <div id="sq">${loadingCard('Eingesetzte Spieler')}</div>
@@ -493,7 +584,7 @@ function renderSpieler(q) {
   const sort = SORTS[q.get('s')] ? q.get('s') : 'apps', page = Math.max(1, +q.get('p') || 1), f = q.get('f') || '';
   const chips = Object.entries(SORTS).map(([k, [, l]]) => `<a class="chip ${sort === k ? 'on' : ''}" href="#/spieler?s=${k}${f ? '&f=' + encodeURIComponent(f) : ''}">${l === 'Spiele' ? 'Pflichtspiele' : l === 'Liga' ? 'Ligaspiele' : l}</a>`).join('');
   const hof = (S.home?.hall_of_fame || []).filter((h) => IX.player[h.id]);
-  view.innerHTML = `<h1 class="page-title">Spieler</h1><p class="sub">${fmtN(S.db.players.length)} Spieler mit Einsätzen im Archiv · Quelle dbFCZ</p>
+  view.innerHTML = `<h1 class="page-title">Spieler</h1><p class="sub gap">${fmtN(S.db.players.length)} Spieler mit Einsätzen im Archiv · Quelle dbFCZ</p>
   ${hof.length ? card('Hall of Fame (FCZ-Museum)', `<div class="chips">${hof.map((h) => `<a class="chip" href="#/spieler/${h.id}">${esc(h.name)}</a>`).join('')}</div>`) : ''}
   <input type="search" id="pf" placeholder="Name filtern …" value="${esc(f)}" aria-label="Spieler filtern" style="width:100%;margin-bottom:10px">
   <div class="chips">${chips}</div>
@@ -512,15 +603,13 @@ async function renderPlayer(id, seq) {
   const grank = S.db.players.filter((x) => x[4] > p[4]).length + 1;
   const thread = Object.entries(S.arch?.topics || {}).find(([, t]) => norm(t.title) === norm(p[1]));
   const hof = (S.home?.hall_of_fame || []).some((h) => h.id === id);
-  view.innerHTML = `<div class="row" style="align-items:flex-start">${avatar(p[1])}<div><h1 class="page-title">${esc(p[1])}</h1><p class="sub">${esc(seasonLabel(p[7]))} – ${esc(seasonLabel(p[8]))}${sq ? ` · aktuell #${sq.no ?? '–'} · ${esc(sq.pos || '')}` : ''}${hof ? ' · <span class="pill ok">Hall of Fame</span>' : ''}</p></div></div><br>
-    <div class="grid3">
-      <div class="stat"><b>${p[2]}</b><span>Pflichtspiele<br>#${rank} all-time</span></div>
-      <div class="stat"><b>${p[4]}</b><span>Pflichtspieltore<br>#${grank} all-time</span></div>
+  view.innerHTML = `<div class="row" style="align-items:flex-start">${avatar(p[1])}<div><h1 class="page-title">${esc(p[1])}</h1><p class="sub">${esc(seasonLabel(p[7]))} – ${esc(seasonLabel(p[8]))}${sq ? ` · aktuell #${sq.no ?? '–'} · ${esc(sq.pos || '')}` : ''}${hof ? ' · <span class="pill ok">Hall of Fame</span>' : ''}</p></div></div>
+    <div class="grid3 keep" style="margin-top:12px">
+      <div class="stat"><b>${p[2]}</b><span>Pflichtspiele</span> <span class="pill">#${rank}</span></div>
+      <div class="stat"><b>${p[4]}</b><span>Tore</span> <span class="pill">#${grank}</span></div>
       <div class="stat"><b>${p[9]}</b><span>Saisons</span></div>
-      <div class="stat"><b>${p[3]}</b><span>Ligaspiele</span></div>
-      <div class="stat"><b>${p[5]}</b><span>Ligatore</span></div>
-      <div class="stat"><b>${p[2] ? (p[4] / p[2]).toFixed(2) : '–'}</b><span>Tore/Spiel</span></div>
-    </div><br>
+    </div>
+    <p class="sub gap">Liga: ${p[3]} Spiele, ${p[5]} Tore · ${p[2] ? (p[4] / p[2]).toFixed(2) : '–'} Tore pro Pflichtspiel · ${p[6]} Testspiele</p>
     <div id="pseas">${loadingCard('Karriere beim FCZ')}</div>
     ${sq ? card('Aktuelle Saison (FotMob)', `<div class="grid3"><div class="stat"><b>${sq.goals ?? 0}</b><span>Tore</span></div><div class="stat"><b>${sq.assists ?? 0}</b><span>Assists</span></div><div class="stat"><b>${sq.rating ? sq.rating.toFixed(2) : '–'}</b><span>Note</span></div></div>`) : ''}
     <div id="wiki">${loadingCard('Wikipedia')}</div>
@@ -567,11 +656,11 @@ function renderForum(q) {
   const mood = (a?.mood || []).slice(-60);
   const liked = Object.values(a?.liked || {}).sort((x, y) => y.likes - x.likes).slice(0, 8);
   const nTopics = Object.keys(a?.topics || {}).length;
-  view.innerHTML = `<h1 class="page-title">Forum</h1><p class="sub">Live-Übersicht von fczforum.ch. Zum Lesen der Beiträge braucht es ein Forum-Login.</p><br>
-  <div class="grid3"><div class="stat"><b>${fmtN(f.stats?.posts)}</b><span>Beiträge</span></div><div class="stat"><b>${fmtN(f.stats?.topics)}</b><span>Themen</span></div><div class="stat"><b>${fmtN(f.stats?.members)}</b><span>Mitglieder</span></div></div><br>
+  view.innerHTML = `<h1 class="page-title">Forum</h1><p class="sub gap">Live-Übersicht von fczforum.ch. Zum Lesen der Beiträge braucht es ein Forum-Login.</p>
   ${f.matchMood ? card('Matchstimmung', `<div class="row"><span class="mood">${esc(f.matchMood.emoji)}</span><div class="grow"><b>${esc(f.matchMood.label)}</b> · ${f.matchMood.score}/100<div class="s muted">aus den letzten ${f.matchMood.matches} Spielthreads</div></div></div>
     ${mood.length > 2 ? `<div class="bars thin">${mood.map((m) => `<i style="height:${m[1]}%" title="${new Date(m[0]).toLocaleString('de-CH')}: ${m[1]}"></i>`).join('')}</div><div class="s muted small">Verlauf seit ${new Date(mood[0][0]).toLocaleDateString('de-CH')}</div>` : ''}`) : ''}
   ${card('Trending', `<ul class="list">${(f.trending || []).map((t) => `<li><a class="item" target="_blank" rel="noopener" href="${forumTopic(t.slug)}"><span class="pill heat">${ICON.flame}${t.recentPostsCount}</span><span class="grow"><div class="t">${esc(t.title)}</div><div class="s">${esc(t.forumName)} · von ${esc(t.starterName)}</div></span>${ICON.ext}</a></li>`).join('') || '<div class="empty">ruhig gerade</div>'}</ul>`)}
+  <div class="grid3 keep" style="margin-bottom:12px"><div class="stat"><b>${fmtN(f.stats?.posts)}</b><span>Beiträge</span></div><div class="stat"><b>${fmtN(f.stats?.topics)}</b><span>Themen</span></div><div class="stat"><b>${fmtN(f.stats?.members)}</b><span>Mitglieder</span></div></div>
   ${card('Bereiche', `<ul class="list">${f.forums.map((x) => `<li><a class="item" target="_blank" rel="noopener" href="${x.latest ? esc(x.latest.url) : 'https://fczforum.ch/forum'}">${avatar(x.name)}<span class="grow"><div class="t">${esc(x.name)}${x.membersOnly ? ' <span class="pill">nur Mitglieder</span>' : ''}</div>
     <div class="s">${fmtN(x.topics)} Themen · ${fmtN(x.posts)} Beiträge</div>${x.latest ? `<div class="s">↳ ${esc(x.latest.topicTitle)} · ${esc(x.latest.authorName)} · ${rel(x.latest.createdAt)}</div>` : ''}</span></a></li>`).join('')}</ul>`)}
   ${card('Meistgeliked', liked.map((l) => `<a class="quote" target="_blank" rel="noopener" href="${esc(l.url)}">${esc(clip(l.excerpt, 240))}<div class="s muted">${esc(l.authorName)} · ♥ ${l.likes} · ${esc(l.topicTitle)}</div></a>`).join(''))}
@@ -611,13 +700,19 @@ $('#sheet').addEventListener('click', (e) => {
 // ---------------------------------------------------------------- Search
 let searchIndex = null;
 function buildSearch() {
-  const E = [];
-  for (const p of S.db.players) E.push({ g: 'Spieler', t: p[1], s: `${p[2]} Pflichtspiele · ${p[4]} Tore · ${seasonLabel(p[7]).slice(0, 4)}–${seasonLabel(p[8]).slice(-4)}`, h: '#/spieler/' + p[0], k: norm(p[1]), w: Math.log(2 + p[2]), pid: p[0] });
+  const E = []; const byPid = {};
+  for (const p of S.db.players) { const e = { g: 'Spieler', t: p[1], s: `${p[2]} Pflichtspiele · ${p[4]} Tore · ${seasonLabel(p[7]).slice(0, 4)}–${seasonLabel(p[8]).slice(-4)}`, h: '#/spieler/' + p[0], k: norm(p[1]), w: Math.log(2 + p[2]), pid: p[0] }; byPid[p[0]] = e; E.push(e); }
+  for (const p of S.fm?.squad || []) {
+    if (p.group === 'coach') continue;
+    const db = findPlayerByName(p.name);
+    if (db && byPid[db[0]]) { const e = byPid[db[0]]; e.w += 4; e.s = `Kader #${p.no ?? '–'} · ${p.pos || ''} · ` + e.s; e.squad = p; continue; }
+    E.push({ g: 'Spieler', t: p.name, s: `Kader #${p.no ?? '–'} · ${p.pos || ''} · ${p.age ?? ''} J. · neu, noch nicht im Archiv`, h: `https://www.fotmob.com/players/${p.id}`, ext: true, k: norm(p.name), w: 4 });
+  }
   for (const [id, n] of IX.oppSorted) if (id > 0) E.push({ g: 'Gegner', t: teamName(id), s: `${n} Spiele gegen den FCZ`, h: '#/gegner/' + id, k: norm(teamName(id)), w: Math.log(2 + n) + 1, tid: id });
   for (const s of S.db.seasons) E.push({ g: 'Saisons', t: 'Saison ' + s.label, s: [s.league, s.rank ? 'Rang ' + s.rank : '', s.note].filter(Boolean).join(' · '), h: '#/saisonarchiv/' + s.id, k: norm(s.label + ' ' + s.label.replace(/(\d{2})(\d{2})\/(\d{2})(\d{2})/, '$2/$4') + ' ' + (s.note || '')), w: 2 });
   for (const [slug, t] of Object.entries(S.arch?.topics || {})) E.push({ g: 'Forum-Themen', t: t.title, s: `${t.forum || ''} · ${rel(t.lastPost || t.last)}`, h: forumTopic(slug), ext: true, k: norm(t.title), w: 1.5 });
-  for (const p of S.fm?.squad || []) if (p.group !== 'coach') { const db = findPlayerByName(p.name); E.push({ g: 'Aktueller Kader', t: p.name, s: `#${p.no ?? '–'} · ${p.pos || ''} · ${p.age ?? ''} J.${db ? ` · ${db[2]} FCZ-Spiele` : ''}`, h: db ? '#/spieler/' + db[0] : `https://www.fotmob.com/players/${p.id}`, ext: !db, k: norm(p.name), w: 4 }); }
-  const pages = [['Tabelle', '#/saison?t=tabelle', 'tabelle rangliste'], ['Spielplan', '#/saison?t=spiele', 'spielplan fixtures kalender termine'], ['Kader', '#/saison?t=kader', 'kader team squad'], ['Rekorde & Serien', '#/archiv?m=rekorde', 'rekorde serien hoechste siege zeitmaschine'], ['Platzierungen aller Saisons', '#/archiv?m=saisons', 'saisons platzierungen meister titel'], ['Forum-Puls', '#/forum', 'forum stimmung trending']];
+  const gc = findTeam('Grasshoppers');
+  const pages = [['Tabelle', '#/saison?t=tabelle', 'tabelle rangliste'], ['Spielplan', '#/saison?t=spiele', 'spielplan fixtures kalender termine'], ['Kader', '#/saison?t=kader', 'kader team squad'], ['Rekorde & Serien', '#/archiv?m=rekorde', 'rekorde serien hoechste siege zeitmaschine'], ['Platzierungen aller Saisons', '#/archiv?m=saisons', 'saisons platzierungen meister titel'], ['Stadtderby FCZ – GC', '#/gegner/' + gc, 'derby stadtderby'], ['Tagesquiz', '#/heute', 'quiz tagesquiz raten'], ['Forum-Puls', '#/forum', 'forum stimmung trending']];
   for (const [t, h, k] of pages) E.push({ g: 'Seiten', t, s: 'Bereich der App', h, k, w: 3 });
   searchIndex = E;
 }
@@ -648,7 +743,7 @@ function parseCombo(q) {
   const f = {}; const rest = [];
   for (const raw of q.trim().split(/\s+/)) {
     const t = norm(raw);
-    if (/^\d{1,2}:\d{1,2}$/.test(raw)) f.s = raw;
+    if (/^\d{1,2}[:\-]\d{1,2}$/.test(raw)) f.s = raw.replace('-', ':');
     else if (/^(18|19|20)\d\d$/.test(raw)) f.y = raw;
     else if (/^(\d0)er$/.test(t) || /^(19|20)\d0er$/.test(t)) { const d = t.length === 4 ? (+t.slice(0, 2) >= 30 ? '19' : '20') + t.slice(0, 2) : t.slice(0, 4); f.d = d; }
     else if (COMPWORDS[t]) f.c = COMPWORDS[t];
@@ -657,6 +752,23 @@ function parseCombo(q) {
   }
   if (rest.length) { const o = findTeam(rest.join(' ')); if (o) { f.o = o; rest.length = 0; } }
   return { f, rest };
+}
+function oppAnswer(tid) {
+  const ms = IX.byOpp[tid].filter((x) => x[7] !== 'F');
+  const nx = (S.fm?.fixtures || []).find((x) => !x.finished && findTeam(isFczFm(x.homeId) ? x.away : x.home) === tid);
+  return card(`FCZ vs ${esc(teamName(tid))} · Pflichtspiele`, wdlBar(summarize(ms)) + `<div class="form" style="margin-top:6px">${ms.slice(-8).map((x) => `<a class="badge ${res(x).r}" href="#/spiel/${x[0]}" title="${fmtD(x[1])}">${LET[res(x).r]}</a>`).join('')}</div>${nx ? `<div class="s" style="margin-top:6px">Nächstes Duell: ${new Date(nx.utc).toLocaleDateString('de-CH')}</div>` : ''}`, `<a href="#/gegner/${tid}">Bilanz</a>`, 'answer');
+}
+function playerAnswer(p, q) {
+  const rank = S.db.players.filter((x) => x[2] > p[2]).length + 1;
+  const thread = Object.entries(S.arch?.topics || {}).find(([, t]) => norm(t.title) === norm(p[1]));
+  return `<section class="card answer"><a class="row" href="#/spieler/${p[0]}">${avatar(p[1])}<div class="grow"><b>${hl(p[1], q)}</b><div class="s">${esc(seasonLabel(p[7]))} – ${esc(seasonLabel(p[8]))}</div></div>${ICON.chev}</a>
+    <div class="grid3" style="margin-top:10px"><div class="stat"><b>${p[2]}</b><span>Pflichtsp. · #${rank}</span></div><div class="stat"><b>${p[4]}</b><span>Tore</span></div><div class="stat"><b>${p[9]}</b><span>Saisons</span></div></div>
+    <div class="ext"><a href="${dbfczUrl('spieler', p[0])}" target="_blank" rel="noopener">${ICON.db} dbFCZ</a><a href="${thread ? forumTopic(thread[0]) : googleForum(p[1])}" target="_blank" rel="noopener">${ICON.chat} ${thread ? 'Spielerthread' : 'Forum'}</a></div></section>`;
+}
+function comboOut(f, ms) {
+  const p = new URLSearchParams(Object.entries(f).filter(([k]) => k !== 'w').map(([k, v]) => [k, String(v)]));
+  const label = [f.o && 'vs ' + teamName(f.o), f.c && COMP[f.c], f.w && '„' + f.w + '“', f.v && (f.v === 'h' ? 'Heim' : 'Auswärts'), f.y, f.d && f.d + 'er', f.s && 'Resultat ' + f.s].filter(Boolean).join(' · ');
+  return { g: label, answer: card(`${fmtN(ms.length)} Spiele`, wdlBar(summarize(ms)), f.w ? '' : `<a href="#/archiv?${p}">alle zeigen</a>`, 'answer'), items: ms.slice(-8).reverse().map((x) => ({ match: x })) };
 }
 function search(qs) {
   if (!searchIndex) buildSearch();
@@ -670,15 +782,17 @@ function search(qs) {
     out.push({ g: y ? `Spiele am ${q}` : `Spiele an einem ${m[1]}.${m[2]}.`, items: ms.slice(-12).reverse().map((x) => ({ match: x })), all: ms.length > 12 ? `#/archiv?tag=${md}` : null, n: ms.length });
     return out;
   }
-  // combos: opponent + year/decade + score + competition + venue
+  // combos: opponent + year/decade + score + competition + venue (+ leftover words matched against competition names)
   const { f, rest } = parseCombo(q);
   const filt = Object.keys(f);
-  if (filt.length && !rest.length && !(filt.length === 1 && f.o)) {
-    const ms = filterMatches(f);
-    const p = new URLSearchParams(Object.entries(f).map(([k, v]) => [k, String(v)]));
-    const label = [f.o && 'vs ' + teamName(f.o), f.c && COMP[f.c], f.v && (f.v === 'h' ? 'Heim' : 'Auswärts'), f.y, f.d && f.d + 'er', f.s && 'Resultat ' + f.s].filter(Boolean).join(' · ');
-    out.push({ g: label, answer: card(`${fmtN(ms.length)} Spiele`, wdlBar(summarize(ms)), `<a href="#/archiv?${p}">alle zeigen</a>`, 'answer'), items: ms.slice(-8).reverse().map((x) => ({ match: x })) });
+  if (filt.length === 1 && f.o && !rest.length) {
+    out.push({ g: 'Gegner', answer: oppAnswer(f.o), items: IX.byOpp[f.o].slice(-6).reverse().map((x) => ({ match: x })), all: `#/archiv?o=${f.o}`, n: IX.byOpp[f.o].length });
     return out;
+  }
+  if (filt.length) {
+    let ms = filterMatches(f);
+    if (rest.length) { ms = ms.filter((x) => { const d = norm(x[8]); return rest.every((w) => d.includes(w)); }); f.w = rest.join(' '); }
+    if (ms.length) { out.push(comboOut(f, ms)); return out; }
   }
   const words = norm(q.replace(/^(gegen|vs\.?)\s+/i, '')).split(' ').filter(Boolean);
   if (!words.length) return out;
@@ -695,27 +809,21 @@ function search(qs) {
   };
   let hits = searchIndex.map((e) => [scoreIt(e, words), e]).filter((h) => h[0] >= 0);
   let fuzzy = false;
-  if (!hits.length) { hits = searchIndex.map((e) => [scoreIt(e, words, true), e]).filter((h) => h[0] >= 0); fuzzy = hits.length > 0; }
+  if (!hits.length) {
+    // competition names in the archive ("Europa League", "Messestädte", "Alpencup")
+    const ms = S.db.matches.filter((x) => { const d = norm(x[8]); return words.every((w) => d.includes(w)); });
+    if (ms.length) { out.push(comboOut({ w: q }, ms)); return out; }
+    hits = searchIndex.map((e) => [scoreIt(e, words, true), e]).filter((h) => h[0] >= 0); fuzzy = hits.length > 0;
+  }
   hits.sort((a, b) => b[0] - a[0]);
-  // answer card for a clear top hit
   const top = hits[0]?.[1];
   if (top && (hits.length === 1 || hits[0][0] - hits[1][0] > 1.5 || top.k === words.join(' '))) {
-    if (top.pid) {
-      const p = IX.player[top.pid]; const rank = S.db.players.filter((x) => x[2] > p[2]).length + 1;
-      const thread = Object.entries(S.arch?.topics || {}).find(([, t]) => norm(t.title) === norm(p[1]));
-      out.push({ g: 'Treffer', answer: `<section class="card answer"><a class="row" href="#/spieler/${p[0]}">${avatar(p[1])}<div class="grow"><b>${hl(p[1], q)}</b><div class="s">${esc(seasonLabel(p[7]))} – ${esc(seasonLabel(p[8]))}</div></div>${ICON.chev}</a>
-        <div class="grid3" style="margin-top:10px"><div class="stat"><b>${p[2]}</b><span>Pflichtsp. · #${rank}</span></div><div class="stat"><b>${p[4]}</b><span>Tore</span></div><div class="stat"><b>${p[9]}</b><span>Saisons</span></div></div>
-        <div class="ext"><a href="${dbfczUrl('spieler', p[0])}" target="_blank" rel="noopener">${ICON.db} dbFCZ</a><a href="${thread ? forumTopic(thread[0]) : googleForum(p[1])}" target="_blank" rel="noopener">${ICON.chat} ${thread ? 'Spielerthread' : 'Forum'}</a></div></section>`, items: [] });
-    } else if (top.tid) {
-      const ms = IX.byOpp[top.tid].filter((x) => x[7] !== 'F');
-      const nx = (S.fm?.fixtures || []).find((x) => !x.finished && findTeam(isFczFm(x.homeId) ? x.away : x.home) === top.tid);
-      out.push({ g: 'Treffer', answer: card(`FCZ vs ${esc(teamName(top.tid))} · Pflichtspiele`, wdlBar(summarize(ms)) + `<div class="form" style="margin-top:6px">${ms.slice(-8).map((x) => `<a class="badge ${res(x).r}" href="#/spiel/${x[0]}" title="${fmtD(x[1])}">${LET[res(x).r]}</a>`).join('')}</div>${nx ? `<div class="s" style="margin-top:6px">Nächstes Duell: ${new Date(nx.utc).toLocaleDateString('de-CH')}</div>` : ''}`, `<a href="#/gegner/${top.tid}">Bilanz</a>`, 'answer'), items: [] });
-    }
+    if (top.pid) { out.push({ g: 'Treffer', answer: playerAnswer(IX.player[top.pid], q), items: [] }); hits.shift(); }
+    else if (top.tid) { out.push({ g: 'Treffer', answer: oppAnswer(top.tid), items: [] }); hits.shift(); }
   }
   const groups = {};
   for (const [, e] of hits) (groups[e.g] ||= []).push(e);
-  const order = ['Aktueller Kader', 'Seiten', 'Gegner', 'Spieler', 'Saisons', 'Forum-Themen'];
-  for (const g of order) if (groups[g]) out.push({ g: g + (fuzzy ? ' (ähnlich)' : ''), items: groups[g].slice(0, g === 'Spieler' ? 10 : 6), n: groups[g].length });
+  for (const g of ['Seiten', 'Gegner', 'Spieler', 'Saisons', 'Forum-Themen']) if (groups[g]) out.push({ g: g + (fuzzy ? ' (ähnlich)' : ''), items: groups[g].slice(0, g === 'Spieler' ? 10 : 6), n: groups[g].length });
   return out;
 }
 function emptySearch() {
@@ -723,7 +831,7 @@ function emptySearch() {
   const nf = nextFixture();
   const next = nf ? (isFczFm(nf.homeId) ? nf.away : nf.home) : null;
   const tr = (S.forum?.trending || []).slice(0, 3).map((t) => t.title);
-  const sugg = [next, 'gegen GC', 'Cup Basel', 'auswärts Sion 2022', '5:0', '1981', 'Kuhn', zurichISO().slice(8) + '.' + zurichISO().slice(5, 7) + '.', ...tr].filter(Boolean);
+  const sugg = [next, 'gegen GC', 'Cup Basel', 'auswärts YB 2022', 'Europa League', '5:0', '1981', 'Kuhn', zurichISO().slice(8) + '.' + zurichISO().slice(5, 7) + '.', ...tr].filter(Boolean);
   return `${recent.length ? `<div class="group-h">Zuletzt gesucht</div><div class="chips flush">${recent.map((r) => `<button class="chip" data-q="${esc(r)}">${esc(r)}</button>`).join('')}</div>` : ''}
     <div class="group-h">Probier mal</div><div class="chips flush">${sugg.map((x) => `<button class="chip" data-q="${esc(x)}">${esc(x)}</button>`).join('')}</div>
     <p class="hint" style="margin-top:16px">Eine Suche für alles: <b>${fmtN(S.db.players.length)} Spieler</b>, <b>${fmtN(S.db.matches.length)} Spiele</b>, ${S.db.seasons.length} Saisons, alle Gegner, der aktuelle Kader und die Forum-Themen.<br>
@@ -772,10 +880,9 @@ document.addEventListener('click', async (e) => {
 function applyTheme() { const t = store.get('theme', 'auto'); if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t; }
 
 // ---------------------------------------------------------------- router
-let lastHash = null, navDepth = -1;
+let lastHash = null, navDepth = 0;
 const NEEDS_DB = new Set(['archiv', 'gegner', 'saisonarchiv', 'spieler', 'spiel', 'suche']);
 function route() {
-  navDepth++;
   const h = location.hash.slice(2) || 'heute';
   const [path, qs] = h.split('?');
   const q = new URLSearchParams(qs || '');
@@ -790,7 +897,7 @@ function route() {
   layer.hidden = true;
   if (a === 'spiel') {
     if (!lastHash || /^#\/(spiel|suche)/.test(lastHash)) { renderMain('archiv', null, new URLSearchParams(), 'archiv'); lastHash = '#/archiv'; }
-    if (!S.db) { sheet('<div class="empty">Archiv lädt …</div>'); dbReady.then(route); return; }
+    if (!S.db) { sheet('<div class="empty">Archiv lädt …</div>'); dbReady.then(() => { if (location.hash.startsWith('#/spiel/')) openMatch(+b); }); return; }
     openMatch(+b); return;
   }
   closeSheet();
@@ -816,19 +923,24 @@ function renderMain(a, b, q, tab) {
   else renderHeute(seq);
   if (!q.get('p')) window.scrollTo(0, 0);
 }
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => { navDepth++; route(); });
 applyTheme();
 loadDb();
-loadSmall().then(() => {
+const smallReady = loadSmall();
+smallReady.then(() => {
   route();
-  dbReady.then(() => { if (view.dataset.r === 'heute' || view.dataset.r === 'saison') renderMain(view.dataset.r, null, new URLSearchParams(location.hash.split('?')[1] || ''), view.dataset.r); });
+  dbReady.then(() => {
+    integrate();
+    if (!layer.hidden) renderResults(qi.value);
+    else if (view.dataset.r === 'heute' || view.dataset.r === 'saison') renderMain(view.dataset.r, null, new URLSearchParams(location.hash.split('?')[1] || ''), view.dataset.r);
+  });
 });
 // installed PWAs stay open for days: refresh small data when coming back after a while
 let hiddenAt = 0;
 document.addEventListener('visibilitychange', async () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }
   if (Date.now() - hiddenAt < 10 * 60e3) return;
-  await loadSmall();
+  await loadSmall(); integrate();
   if (['heute', 'saison', 'forum'].includes(view.dataset.r) && layer.hidden && $('#sheet').hidden) { lastHash = null; route(); }
 });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

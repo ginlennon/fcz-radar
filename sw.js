@@ -1,13 +1,14 @@
 // Offline shell + fresh-but-fast data. Bump VERSION (and ?v= in index.html) when shell files change.
-const VERSION = 'fczr-v2';
-const SHELL = ['./', 'index.html', 'styles.css?v=2', 'app.js?v=2', 'manifest.webmanifest', 'assets/icon.svg', 'assets/icon-192.png'];
+const VERSION = 'fczr-v3';
+const DATA = 'fczr-data'; // survives VERSION bumps
+const SHELL = ['./', 'index.html', 'styles.css?v=3', 'app.js?v=3', 'manifest.webmanifest', 'assets/icon.svg', 'assets/icon-192.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION && k !== DATA).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
 // network first, but never wait more than `ms` when a cached copy exists (weak stadium connection)
-function netFirst(req, ms) {
-  const net = fetch(req).then((r) => { if (r.ok) { const c = r.clone(); caches.open(VERSION).then((cc) => cc.put(req, c)); } return r; });
+function netFirst(req, ms, cacheName = VERSION) {
+  const net = fetch(req).then((r) => { if (r.ok) { const c = r.clone(); caches.open(cacheName).then((cc) => cc.put(req, c)); } return r; });
   const cached = caches.match(req, { ignoreSearch: true });
   return new Promise((resolve) => {
     let done = false;
@@ -21,6 +22,8 @@ self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET' || u.origin !== location.origin) return;
   if (/\.(js|css|svg|png|webmanifest)$/.test(u.pathname) && u.search.includes('v=')) {
     e.respondWith(caches.match(e.request).then((r) => r || netFirst(e.request, 4000))); // versioned shell: cache first
+  } else if (u.pathname.includes('/data/')) {
+    e.respondWith(netFirst(e.request, 3000, DATA));
   } else {
     e.respondWith(netFirst(e.request, 3000));
   }
