@@ -1,7 +1,7 @@
 // Offline shell + fresh-but-fast data. Bump VERSION (and ?v= in index.html) when shell files change.
-const VERSION = 'fczr-v3';
+const VERSION = 'fczr-v4';
 const DATA = 'fczr-data'; // survives VERSION bumps
-const SHELL = ['./', 'index.html', 'styles.css?v=3', 'app.js?v=3', 'manifest.webmanifest', 'assets/icon.svg', 'assets/icon-192.png'];
+const SHELL = ['./', 'index.html', 'styles.css?v=4', 'app.js?v=4', 'manifest.webmanifest', 'assets/icon.svg', 'assets/icon-192.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== VERSION && k !== DATA).map((k) => caches.delete(k)))).then(() => self.clients.claim()));

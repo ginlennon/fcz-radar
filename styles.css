@@ -242,3 +242,16 @@ body.locked{overflow:hidden}
 .qbtn.bad{background:var(--loss);border-color:var(--loss);color:#fff}
 .qbtn.dim{opacity:.45}
 .qfin{margin-top:6px}
+/* round 3 */
+select,input[type=search],input[type=text]{font-size:16px}
+input[type=search]{-webkit-appearance:none;appearance:none}
+.sheet-panel,.search-results{overscroll-behavior:contain}
+.qbtn.bad{color:var(--on-strong)}
+.stat .pill{display:table;margin-top:6px}
+.bars .gapbar{flex:.6;background:repeating-linear-gradient(90deg,var(--line) 0 2px,transparent 2px 5px);height:2px;align-self:flex-end}
+.mono{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--line);font-size:11px;letter-spacing:-.3px}
+.mono.fcz{background:#fff;color:#0e3f86;border:2px solid #0e3f86;font-size:13px}
+.mono.big{width:48px;height:48px;font-size:17px}
+.mono.big.fcz{font-size:24px;border-width:3px}
+.hero .mono{background:#fff;color:#0e3f86;border-color:#fff}
+table.t td:first-child,table.t th:first-child{white-space:nowrap;width:36px}

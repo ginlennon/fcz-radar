@@ -35,9 +35,11 @@ const initials = (n) => String(n || '?').replace(/[«»"]/g, '').split(/\s+/).ma
 function hue(s) { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
 const avatar = (n) => `<span class="avatar">${esc(initials(n))}</span>`;
 const isFczFm = (id) => S.fm && id === S.fm.teamId;
-const mono = (big) => `<span class="mono${big ? ' big' : ''}" aria-label="FCZ">Z</span>`; // no club logo, by design
-const crest = (id) => (isFczFm(id) ? mono() : id ? `<img class="crest" loading="lazy" alt="" src="https://images.fotmob.com/image_resources/logo/teamlogo/${id}_small.png" onerror="this.style.visibility='hidden'">` : '');
-const crestBig = (id) => (isFczFm(id) ? mono(true) : `<img alt="" src="https://images.fotmob.com/image_resources/logo/teamlogo/${id}.png" onerror="this.style.visibility='hidden'">`);
+// no club logos anywhere (trademarks + no third-party image requests): neutral monograms
+const FMNAME = {};
+const mono = (name, big, fcz) => `<span class="mono${big ? ' big' : ''}${fcz ? ' fcz' : ''}" aria-hidden="true">${esc(fcz ? 'Z' : initials(String(name || '?').replace(/^(FC|BSC|SC|FK)\s+/i, '')).slice(0, big ? 2 : 1))}</span>`;
+const crest = (id, name) => mono(name || FMNAME[id], false, isFczFm(id));
+const crestBig = (id, name) => mono(name || FMNAME[id], true, isFczFm(id));
 const COMP = { L: 'Liga', C: 'Cup', I: 'Europa', F: 'Test', LC: 'Ligacup', P: 'Pflicht', O: 'Andere' };
 const dbfczUrl = (kind, id) => `https://www.dbfcz.ch/${kind}.php?${kind}_id=${id}`;
 const forumTopic = (slug) => `https://fczforum.ch/forum/thema/${encodeURIComponent(slug)}/letzter-beitrag`;
@@ -66,9 +68,10 @@ async function loadSmall() {
     ['data/dbfcz_home.json', 'data/forum.json', 'data/forum_archive.json', 'data/fotmob.json', 'data/meta.json']
       .map((p) => getJSON(p).catch(() => null)));
   keys.forEach((k, i) => { if (got[i]) S[k] = got[i]; }); // a failed refetch never blanks good data
+  fmNames();
 }
 function loadDb() {
-  dbReady = getJSON('data/db.json').then((db) => { S.db = db; buildIndexes(); }).catch(() => { S.db = null; });
+  dbReady = getJSON('data/db.json').then((db) => { S.db = db; S.dbFailed = false; buildIndexes(); }).catch(() => { S.db = null; S.dbFailed = true; });
   return dbReady;
 }
 function integrate() { // needs db + fotmob; safe to call repeatedly
@@ -165,20 +168,24 @@ function matchItem(m, { showSeason = true, pre = '' } = {}) {
 }
 const card = (title, body, link = '', cls = '') => `<section class="card ${cls}"><h2><span>${title}</span>${link}</h2>${body}</section>`;
 const group = (t) => `<h3 class="grp">${t}</h3>`;
-const loadingCard = (t) => card(t, '<div class="skel"></div><div class="skel"></div><div class="skel short"></div>');
+const errCard = (t) => card(t, '<div class="hint">Archiv gerade nicht erreichbar (offline?).</div><button class="btn morebtn" type="button" onclick="location.reload()">Neu laden</button>');
+const loadingCard = (t) => S.dbFailed ? errCard(t) : card(t, '<div class="skel"></div><div class="skel"></div><div class="skel short"></div>');
 function themeBtn() {
   const t = store.get('theme', 'auto');
   return `<button class="ghost small" data-theme-toggle>Design: ${{ auto: 'automatisch', light: 'hell', dark: 'dunkel' }[t]}</button>`;
 }
 const foot = () => `<p class="foot">Inoffizielle Fan-App, nicht mit dem FC Zürich verbunden.<br>
-  Daten: <a href="https://www.dbfcz.ch" target="_blank" rel="noopener">dbFCZ</a> (CC-BY 4.0) ·
-  <a href="https://fczforum.ch/forum" target="_blank" rel="noopener">FCZforum</a> ·
-  <a href="https://www.fotmob.com/teams/10243/overview/fc-zurich" target="_blank" rel="noopener">FotMob</a> ·
-  <a href="https://mastodon.social/@dbfcz" target="_blank" rel="noopener">@dbFCZ</a> · Wikipedia<br>
-  Forum-Stand ${S.forum?.fetched ? rel(S.forum.fetched) : '–'} · <a href="https://github.com/ginlennon/fcz-radar" target="_blank" rel="noopener">Quellcode</a><br>${themeBtn()}</p>`;
+  Daten aufbereitet und ergänzt aus <a href="https://www.dbfcz.ch" target="_blank" rel="noopener">dbFCZ</a>
+  (<a href="https://creativecommons.org/licenses/by/4.0/deed.de" target="_blank" rel="noopener">CC BY 4.0</a>), der Startseite von
+  <a href="https://fczforum.ch/forum" target="_blank" rel="noopener">FCZforum</a>, <a href="https://www.fotmob.com/teams/10243/overview/fc-zurich" target="_blank" rel="noopener">FotMob</a>
+  (Spielplan, Tabelle, Kader, neueste Resultate), <a href="https://mastodon.social/@dbfcz" target="_blank" rel="noopener">@dbFCZ</a> und Wikipedia.<br>
+  Keine Cookies, kein Tracking. Gespeichert wird nur lokal auf deinem Gerät (Suchverlauf, Quiz, Design). Beim Öffnen lädt die Seite Inhalte von GitHub Pages, Mastodon und Wikipedia.<br>
+  Forum-Stand ${S.forum?.fetched ? rel(S.forum.fetched) : '–'} · <a href="https://github.com/ginlennon/fcz-radar" target="_blank" rel="noopener">Quellcode</a> ·
+  <a href="https://github.com/ginlennon/fcz-radar/issues" target="_blank" rel="noopener">Fehler melden / Entfernung beantragen</a><br>${themeBtn()}</p>`;
 
 // ---------------------------------------------------------------- Heute
 let timer = null;
+function fmNames() { for (const f of S.fm?.fixtures || []) { FMNAME[f.homeId] = f.home; FMNAME[f.awayId] = f.away; } for (const r of S.fm?.table || []) FMNAME[r.id] = r.shortName || r.name; }
 function nextFixture() {
   const now = Date.now();
   return (S.fm?.fixtures || []).find((f) => !f.finished && !f.cancelled && new Date(f.utc).getTime() > now - 3 * 3600e3);
@@ -269,6 +276,7 @@ function onThisDay() {
   }
   ms = ms.slice().sort((a, b) => (SIG[a[7]] ?? 9) - (SIG[b[7]] ?? 9) || (a[1] < b[1] ? -1 : 1));
   const cur = S.home?.today;
+  if (cur?.spiel_id) ms = ms.filter((m) => m[0] !== cur.spiel_id);
   const lead = cur?.text ? `<a class="lead" href="${cur.spiel_id && IX.matchById.get(cur.spiel_id) ? '#/spiel/' + cur.spiel_id : dbfczUrl('spiel', cur.spiel_id)}"><b>${esc(cur.title)} · Tipp von dbFCZ</b>${esc(cur.text)}</a>` : '';
   return card(title, `${lead}<ul class="list">${ms.slice(0, 5).map(histItem).join('')}</ul>
     ${ms.length > 5 ? `<a class="ghost morebtn" href="#/archiv?tag=${md.slice(1)}">alle ${ms.length} Spiele an diesem Tag</a>` : ''}`);
@@ -278,7 +286,7 @@ function birthdays() {
   if (!b.length && !dd.length) return '';
   const today = zurichISO().slice(5);
   const li = (p, dead) => `<li><a class="item" href="${IX.player?.[p.id] ? '#/spieler/' + p.id : dbfczUrl('spieler', p.id)}">
-    ${avatar(p.name)}<span class="grow"><div class="t">${esc(p.name)}${p.date?.slice(5) === today && !dead ? ' <span class="pill ok">heute</span>' : ''}</div><div class="s">${dead ? '† ' : '* '}${fmtD(p.date)} · ${dead ? 'vor ' : ''}${p.years} Jahre${IX.player?.[p.id] ? ' · ' + IX.player[p.id][2] + ' Pflichtspiele' : ''}</div></span>${ICON.chev}</a></li>`;
+    ${avatar(p.name)}<span class="grow"><div class="t">${esc(p.name)}${p.date?.slice(5) === today && !dead && p.years <= 100 ? ' <span class="pill ok">heute</span>' : ''}</div><div class="s">${dead ? `† ${fmtD(p.date)} · vor ${p.years} Jahren` : p.years > 100 ? `* ${fmtD(p.date)} · vor ${p.years} Jahren geboren` : `* ${fmtD(p.date)} · wird ${p.years}`}${IX.player?.[p.id] ? ' · ' + IX.player[p.id][2] + (IX.player[p.id][2] === 1 ? ' Pflichtspiel' : ' Pflichtspiele') : ''}</div></span>${ICON.chev}</a></li>`;
   return card('Geburtstage & Gedenktage', `<ul class="list">${b.slice(0, 6).map((p) => li(p)).join('')}${dd.slice(0, 3).map((p) => li(p, true)).join('')}</ul>`);
 }
 function forumPulse() {
@@ -303,12 +311,13 @@ async function mastodon(seq) {
     if (seq !== routeSeq) return;
     const el = $('#toots'); if (!el) return;
     el.innerHTML = st.map((s) => {
-      const txt = new DOMParser().parseFromString(s.content, 'text/html').body.textContent;
+      const txt = new DOMParser().parseFromString(s.content.replace(/<br\s*\/?>|<\/p>/g, ' '), 'text/html').body.textContent;
       return `<div class="toot"><p>${esc(clip(txt, 260))}</p><a class="small" href="${esc(s.url)}" target="_blank" rel="noopener">${rel(s.created_at)} ${ICON.ext}</a></div>`;
     }).join('') || '<div class="empty">Keine Toots</div>';
   } catch { const el = $('#toots'); if (el) el.innerHTML = '<div class="empty">Mastodon gerade nicht erreichbar</div>'; }
 }
 function renderHeute(seq) {
+  if (!S.fm && !S.forum && !S.home && S.dbFailed) { view.innerHTML = errCard('Keine Verbindung') + foot(); return; }
   view.innerHTML = heroNext() + lastResult() + miniTable() + quizCard()
     + group('Geschichte') + onThisDay() + birthdays()
     + group('Community') + forumPulse()
@@ -330,8 +339,8 @@ function buildQuiz() {
   const pool = S.db.matches.filter((m) => m[0] > 0 && m[7] !== 'F' && m[5] != null && m[1] < cutoff);
   const qs = [];
   // 1) result of a match from this day in history
-  let cand = pool.filter((m) => m[1].slice(5) === today.slice(5));
-  if (!cand.length) { const days = new Set([-3, -2, -1, 1, 2, 3].map((k) => zurichISO(new Date(Date.now() + k * 86400e3)).slice(5))); cand = pool.filter((m) => days.has(m[1].slice(5))); }
+  const days = new Set([-3, -2, -1, 1, 2, 3].map((k) => zurichISO(new Date(Date.now() + k * 86400e3)).slice(5)));
+  let cand = pool.filter((m) => days.has(m[1].slice(5)));
   if (!cand.length) cand = pool;
   const m = pick(cand); const truth = `${m[5]}:${m[6]}`;
   const opts = new Set([truth]);
@@ -411,7 +420,8 @@ function renderSaison(q) {
     const li = (f) => `<li><a class="item" target="_blank" rel="noopener" href="${esc(f.url)}">${f.finished ? `<span class="badge ${fmRes(f)}">${LET[fmRes(f)]}</span>` : `<span class="pill">${new Date(f.utc).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' })}</span>`}
       <span class="grow"><div class="t">${esc(f.home)} – ${esc(f.away)}</div><div class="s">${new Date(f.utc).toLocaleString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Zurich' })} · ${esc(f.tournament || '')}</div></span>
       <span class="score">${f.finished ? esc(fmScore(f)) : ''}</span>${ICON.ext}</a></li>`;
-    body = card('Kommende Spiele', `<ul class="list">${up.map(li).join('') || '<div class="empty">Keine</div>'}</ul><a class="btn primary morebtn" href="${fm.ics.replace(/^https:/, 'webcal:')}">${ICON.cal} Spielplan im Kalender abonnieren</a>`)
+    body = card('Kommende Spiele', `<ul class="list">${up.map(li).join('') || '<div class="empty">Keine</div>'}</ul><a class="btn primary morebtn" href="${fm.ics.replace(/^https:/, 'webcal:')}">${ICON.cal} Spielplan im Kalender abonnieren</a>
+      <div class="row wrap small" style="justify-content:center;margin-top:6px"><a href="https://calendar.google.com/calendar/r?cid=${encodeURIComponent(fm.ics.replace(/^https:/, 'webcal:'))}" target="_blank" rel="noopener">in Google Kalender</a><span class="muted">·</span><a href="${esc(fm.ics)}">.ics-Datei</a></div>`)
       + card('Gespielt', `<ul class="list">${done.map(li).join('')}</ul>`);
   } else if (tab === 'kader') {
     const groups = {};
@@ -421,12 +431,15 @@ function renderSaison(q) {
       const db = S.db && findPlayerByName(p.name);
       const href = db ? '#/spieler/' + db[0] : `https://www.fotmob.com/players/${p.id}`;
       return `<li><a class="item" href="${href}" ${db ? '' : 'target="_blank" rel="noopener"'}><span class="avatar no">${p.no ?? '–'}</span>
-      <span class="grow"><div class="t">${esc(p.name)}${p.injury ? ' <span class="pill warn">verletzt</span>' : ''}</div><div class="s">${[p.pos, p.age ? p.age + ' J.' : '', p.country].filter(Boolean).map(esc).join(' · ')}${db ? ` · ${db[2]} FCZ-Spiele` : ''}</div></span>
-      ${g !== 'coach' ? `<span class="kpi num"><b>${p.goals ?? 0}</b> T · <b>${p.assists ?? 0}</b> A${p.rating ? `<br><span class="muted">Note ${p.rating.toFixed(1)}</span>` : ''}</span>` : ''}</a></li>`;
+      <span class="grow"><div class="t">${esc(p.name)}${p.injury ? ' <span class="pill warn">verletzt</span>' : ''}</div><div class="s">${[p.pos, p.age ? p.age + ' J.' : '', land(p.country)].filter(Boolean).map(esc).join(' · ')}${db ? ` · ${db[2]} FCZ-Spiele` : ''}</div></span>
+      ${g !== 'coach' && g !== 'keepers' && (p.goals || p.assists) ? `<span class="kpi num"><b>${p.goals ?? 0}</b> Tore<br><b>${p.assists ?? 0}</b> Assists</span>` : ''}</a></li>`;
     }).join('')}</ul>`)).join('');
   }
   view.innerHTML = `<h1 class="page-title">Saison</h1><div class="chips">${chips}</div>${body}${foot()}`;
 }
+
+const LAND = { Switzerland: 'Schweiz', Austria: 'Österreich', Germany: 'Deutschland', France: 'Frankreich', Italy: 'Italien', Spain: 'Spanien', Netherlands: 'Niederlande', Belgium: 'Belgien', Albania: 'Albanien', 'North Macedonia': 'Nordmazedonien', Croatia: 'Kroatien', Serbia: 'Serbien', 'Bosnia and Herzegovina': 'Bosnien-Herzegowina', 'Ivory Coast': 'Elfenbeinküste', "Côte d'Ivoire": 'Elfenbeinküste', Cameroon: 'Kamerun', Brazil: 'Brasilien', Denmark: 'Dänemark', Sweden: 'Schweden', Norway: 'Norwegen', Turkey: 'Türkei', 'Türkiye': 'Türkei', Greece: 'Griechenland', Slovenia: 'Slowenien', Hungary: 'Ungarn', Czechia: 'Tschechien', 'Czech Republic': 'Tschechien', Poland: 'Polen', Morocco: 'Marokko', Tunisia: 'Tunesien', Algeria: 'Algerien', 'DR Congo': 'DR Kongo', Congo: 'Kongo', Colombia: 'Kolumbien', Argentina: 'Argentinien', 'United States': 'USA', USA: 'USA', Ireland: 'Irland', Scotland: 'Schottland', Iceland: 'Island', Finland: 'Finnland', Ukraine: 'Ukraine', Russia: 'Russland', Romania: 'Rumänien', Bulgaria: 'Bulgarien', Slovakia: 'Slowakei', Lithuania: 'Litauen', Georgia: 'Georgien', Armenia: 'Armenien', Egypt: 'Ägypten', 'South Africa': 'Südafrika', Japan: 'Japan', 'South Korea': 'Südkorea', Australia: 'Australien', Mexico: 'Mexiko', Chile: 'Chile', Uruguay: 'Uruguay', Peru: 'Peru', Venezuela: 'Venezuela', Ecuador: 'Ecuador', Paraguay: 'Paraguay', 'Cape Verde': 'Kap Verde', Guinea: 'Guinea', 'Equatorial Guinea': 'Äquatorialguinea' };
+const land = (c) => (c ? LAND[c] || c : '');
 
 // ---------------------------------------------------------------- Archiv
 function filterMatches(f) {
@@ -471,7 +484,7 @@ function renderArchiv(q) {
       <section class="card"><ul class="list">${ms.slice(0, page * 40).map((m) => matchItem(m)).join('') || '<div class="empty">Keine Spiele für diese Filter</div>'}</ul>
       ${ms.length > page * 40 ? `<a class="btn morebtn" href="${(() => { const p = new URLSearchParams(q); p.set('p', page + 1); return '#/archiv?' + p; })()}">mehr laden</a>` : ''}</section>`;
   }
-  view.innerHTML = `<h1 class="page-title">Archiv</h1><p class="sub gap">${fmtN(S.db.matches.length)} Spiele seit ${fmtD(S.db.matches[0][1])} · Quelle dbFCZ</p><div class="chips" style="margin-top:10px">${modeChips}</div>${body}${foot()}`;
+  view.innerHTML = `<h1 class="page-title">Archiv</h1><p class="sub gap">${fmtN(S.db.matches.length)} Spiele seit ${fmtD(S.db.matches[0][1])} · Quelle dbFCZ, neueste Resultate vorläufig via FotMob</p><div class="chips" style="margin-top:10px">${modeChips}</div>${body}${foot()}`;
 }
 function rankTimeline() {
   const ss = S.db.seasons.filter((s) => s.rank);
@@ -611,7 +624,7 @@ async function renderPlayer(id, seq) {
     </div>
     <p class="sub gap">Liga: ${p[3]} Spiele, ${p[5]} Tore · ${p[2] ? (p[4] / p[2]).toFixed(2) : '–'} Tore pro Pflichtspiel · ${p[6]} Testspiele</p>
     <div id="pseas">${loadingCard('Karriere beim FCZ')}</div>
-    ${sq ? card('Aktuelle Saison (FotMob)', `<div class="grid3"><div class="stat"><b>${sq.goals ?? 0}</b><span>Tore</span></div><div class="stat"><b>${sq.assists ?? 0}</b><span>Assists</span></div><div class="stat"><b>${sq.rating ? sq.rating.toFixed(2) : '–'}</b><span>Note</span></div></div>`) : ''}
+    ${sq ? card('Aktuelle Saison', `<div class="grid3 keep"><div class="stat"><b>${sq.goals ?? 0}</b><span>Tore</span></div><div class="stat"><b>${sq.assists ?? 0}</b><span>Assists</span></div><div class="stat"><b>${sq.age ?? '–'}</b><span>Alter</span></div></div>`) : ''}
     <div id="wiki">${loadingCard('Wikipedia')}</div>
     ${card('Mehr', `<div class="ext">
       <a href="${dbfczUrl('spieler', id)}" target="_blank" rel="noopener">${ICON.db} dbFCZ-Profil</a>
@@ -623,7 +636,7 @@ async function renderPlayer(id, seq) {
   if (seq !== routeSeq) return;
   const max = Math.max(1, ...ps.map((r) => r[1]));
   const el = $('#pseas'); if (!el) return;
-  el.innerHTML = card('Karriere beim FCZ', `<div class="bars" aria-label="Pflichtspiele pro Saison">${ps.map((r) => `<a href="#/saisonarchiv/${r[0]}" style="height:${Math.max(2, 100 * r[1] / max)}%" title="${esc(seasonLabel(r[0]))}: ${r[1]} Pflichtspiele, ${r[6]} Tore"></a>`).join('')}</div>
+  el.innerHTML = card('Karriere beim FCZ', `<div class="bars" aria-label="Pflichtspiele pro Saison">${ps.map((r, i) => `${i && IX.season[r[0]]?.i - IX.season[ps[i - 1][0]]?.i > 1 ? '<span class="gapbar" title="Pause"></span>' : ''}<a href="#/saisonarchiv/${r[0]}" style="height:${Math.max(2, 100 * r[1] / max)}%" title="${esc(seasonLabel(r[0]))}: ${r[1]} Pflichtspiele, ${r[6]} Tore"></a>`).join('')}</div>
     <div class="row between small muted"><span>${esc(seasonLabel(ps[0]?.[0]))}</span><span>Pflichtspiele pro Saison</span><span>${esc(seasonLabel(ps[ps.length - 1]?.[0]))}</span></div>
     <table class="t" style="margin-top:10px"><thead><tr><th></th><th>Saison</th><th>Pfl.</th><th class="hm">Liga</th><th class="hm">Cup</th><th class="hm">Eur.</th><th>Test</th><th>Tore</th></tr></thead><tbody>
     ${ps.slice().reverse().map((r) => `<tr><td></td><td><a href="#/saisonarchiv/${r[0]}">${esc(seasonLabel(r[0]))}</a></td><td>${r[1]}</td><td class="hm">${r[2]}</td><td class="hm">${r[3]}</td><td class="hm">${r[4]}</td><td>${r[5]}</td><td><b>${r[6]}</b></td></tr>`).join('')}</tbody></table>`);
@@ -654,7 +667,7 @@ function renderForum(q) {
   const f = S.forum, a = S.arch; if (!f) { view.innerHTML = '<div class="empty">Keine Forumsdaten</div>'; return; }
   const filt = q.get('f') || '';
   const mood = (a?.mood || []).slice(-60);
-  const liked = Object.values(a?.liked || {}).sort((x, y) => y.likes - x.likes).slice(0, 8);
+  const liked = (f.mostLiked || []).slice(0, 8); // only what the forum shows right now; nothing archived
   const nTopics = Object.keys(a?.topics || {}).length;
   view.innerHTML = `<h1 class="page-title">Forum</h1><p class="sub gap">Live-Übersicht von fczforum.ch. Zum Lesen der Beiträge braucht es ein Forum-Login.</p>
   ${f.matchMood ? card('Matchstimmung', `<div class="row"><span class="mood">${esc(f.matchMood.emoji)}</span><div class="grow"><b>${esc(f.matchMood.label)}</b> · ${f.matchMood.score}/100<div class="s muted">aus den letzten ${f.matchMood.matches} Spielthreads</div></div></div>
@@ -766,8 +779,8 @@ function playerAnswer(p, q) {
     <div class="ext"><a href="${dbfczUrl('spieler', p[0])}" target="_blank" rel="noopener">${ICON.db} dbFCZ</a><a href="${thread ? forumTopic(thread[0]) : googleForum(p[1])}" target="_blank" rel="noopener">${ICON.chat} ${thread ? 'Spielerthread' : 'Forum'}</a></div></section>`;
 }
 function comboOut(f, ms) {
-  const p = new URLSearchParams(Object.entries(f).filter(([k]) => k !== 'w').map(([k, v]) => [k, String(v)]));
-  const label = [f.o && 'vs ' + teamName(f.o), f.c && COMP[f.c], f.w && '„' + f.w + '“', f.v && (f.v === 'h' ? 'Heim' : 'Auswärts'), f.y, f.d && f.d + 'er', f.s && 'Resultat ' + f.s].filter(Boolean).join(' · ');
+  const p = new URLSearchParams(Object.entries(f).filter(([k]) => k !== 'w' && k !== 'q').map(([k, v]) => [k, String(v)]));
+  const label = f.w ? `Wettbewerb: „${f.q || f.w}“` : [f.o && 'vs ' + teamName(f.o), f.c && COMP[f.c], f.v && (f.v === 'h' ? 'Heim' : 'Auswärts'), f.y, f.d && f.d + 'er', f.s && 'Resultat ' + f.s].filter(Boolean).join(' · ');
   return { g: label, answer: card(`${fmtN(ms.length)} Spiele`, wdlBar(summarize(ms)), f.w ? '' : `<a href="#/archiv?${p}">alle zeigen</a>`, 'answer'), items: ms.slice(-8).reverse().map((x) => ({ match: x })) };
 }
 function search(qs) {
@@ -791,7 +804,7 @@ function search(qs) {
   }
   if (filt.length) {
     let ms = filterMatches(f);
-    if (rest.length) { ms = ms.filter((x) => { const d = norm(x[8]); return rest.every((w) => d.includes(w)); }); f.w = rest.join(' '); }
+    if (rest.length) { ms = ms.filter((x) => { const d = norm(x[8]); return rest.every((w) => d.includes(w)); }); f.w = rest.join(' '); f.q = q; }
     if (ms.length) { out.push(comboOut(f, ms)); return out; }
   }
   const words = norm(q.replace(/^(gegen|vs\.?)\s+/i, '')).split(' ').filter(Boolean);
@@ -812,7 +825,7 @@ function search(qs) {
   if (!hits.length) {
     // competition names in the archive ("Europa League", "Messestädte", "Alpencup")
     const ms = S.db.matches.filter((x) => { const d = norm(x[8]); return words.every((w) => d.includes(w)); });
-    if (ms.length) { out.push(comboOut({ w: q }, ms)); return out; }
+    if (ms.length) { out.push(comboOut({ w: q, q }, ms)); return out; }
     hits = searchIndex.map((e) => [scoreIt(e, words, true), e]).filter((h) => h[0] >= 0); fuzzy = hits.length > 0;
   }
   hits.sort((a, b) => b[0] - a[0]);
@@ -839,7 +852,7 @@ function emptySearch() {
 }
 function renderResults(qs) {
   const el = $('#results');
-  if (!S.db) { el.innerHTML = '<div class="empty">Archiv lädt …</div>'; return; }
+  if (!S.db) { el.innerHTML = S.dbFailed ? '<div class="empty">Archiv nicht erreichbar. Bitte später nochmals.</div>' : '<div class="empty">Archiv lädt …</div>'; return; }
   const q = qs.trim();
   if (!q) { el.innerHTML = emptySearch(); return; }
   const groups = search(q);
@@ -912,7 +925,7 @@ function renderMain(a, b, q, tab) {
   const titles = { heute: 'Heute', saison: 'Saison', archiv: 'Archiv', spieler: 'Spieler', forum: 'Forum', gegner: 'Gegner', saisonarchiv: 'Saison' };
   document.title = `FCZ Radar · ${titles[a] || 'Heute'}`;
   view.dataset.r = a || 'heute';
-  if (NEEDS_DB.has(a) && !S.db) { view.innerHTML = loadingCard('Archiv lädt …'); dbReady.then(() => { if (seq === routeSeq) renderMain(a, b, q, tab); }); return; }
+  if (NEEDS_DB.has(a) && !S.db) { view.innerHTML = loadingCard('Archiv lädt …'); dbReady.then(() => { if (seq === routeSeq) { if (S.db) renderMain(a, b, q, tab); else view.innerHTML = errCard('Archiv'); } }); return; }
   if (a === 'saison') renderSaison(q);
   else if (a === 'archiv') renderArchiv(q);
   else if (a === 'gegner') renderGegner(+b);
@@ -932,7 +945,7 @@ smallReady.then(() => {
   dbReady.then(() => {
     integrate();
     if (!layer.hidden) renderResults(qi.value);
-    else if (view.dataset.r === 'heute' || view.dataset.r === 'saison') renderMain(view.dataset.r, null, new URLSearchParams(location.hash.split('?')[1] || ''), view.dataset.r);
+    else if (view.dataset.r === 'heute' || view.dataset.r === 'saison') { const y = scrollY; renderMain(view.dataset.r, null, new URLSearchParams(location.hash.split('?')[1] || ''), view.dataset.r); scrollTo(0, y); }
   });
 });
 // installed PWAs stay open for days: refresh small data when coming back after a while
@@ -941,6 +954,6 @@ document.addEventListener('visibilitychange', async () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }
   if (Date.now() - hiddenAt < 10 * 60e3) return;
   await loadSmall(); integrate();
-  if (['heute', 'saison', 'forum'].includes(view.dataset.r) && layer.hidden && $('#sheet').hidden) { lastHash = null; route(); }
+  if (['heute', 'saison', 'forum'].includes(view.dataset.r) && layer.hidden && $('#sheet').hidden) { const y = scrollY; lastHash = null; route(); scrollTo(0, y); }
 });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

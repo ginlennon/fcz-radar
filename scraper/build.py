@@ -342,7 +342,7 @@ def build_forum():
 
     # rolling archive: every topic we have ever seen on the index (makes forum topics searchable)
     ap = DATA / "forum_archive.json"
-    arch = json.loads(ap.read_text()) if ap.exists() else {"topics": {}, "liked": {}, "mood": []}
+    arch = json.loads(ap.read_text()) if ap.exists() else {"topics": {}, "mood": []}
     def seen(slug, title, forum, author=None, at=None, heat=0):
         if not slug:
             return
@@ -365,11 +365,8 @@ def build_forum():
         seen(x["slug"], x["title"], x["forumName"], heat=x.get("recentPostsCount"))
     for x in ann:
         seen(x["slug"], x["title"], x["forumName"], at=x.get("createdAt"))
-    for x in liked:
-        if x.get("id"):
-            arch["liked"].setdefault(str(x["id"]), {"seen": now}).update(x)
-    # keep the archive bounded
-    arch["liked"] = dict(sorted(arch["liked"].items(), key=lambda kv: -(kv[1].get("likes") or 0))[:400])
+    # post excerpts are NOT archived (only shown while they are on the forum front page)
+    arch.pop("liked", None)
     mm = p.get("matchMood")
     last = arch["mood"][-1] if arch["mood"] else None
     if mm and (not last or last[1] != mm.get("score") or
