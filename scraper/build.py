@@ -57,16 +57,33 @@ def clean_name(s: str) -> str:
     return strip(re.sub(r"<!--.*?-->", "", s, flags=re.S))
 
 
-def write_json(path: Path, obj, pretty=False):
+CHANGED: list[str] = []
+
+
+def _sans_fetched(o):
+    return {k: v for k, v in o.items() if k != "fetched"} if isinstance(o, dict) else o
+
+
+def write_json(path: Path, obj, pretty=False) -> bool:
+    """Write only when the content (ignoring a top-level 'fetched' stamp) changed -> fewer bot commits."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            if _sans_fetched(json.loads(path.read_text(encoding="utf-8"))) == _sans_fetched(
+                    json.loads(json.dumps(obj, ensure_ascii=False))):
+                return False
+        except Exception:  # noqa: BLE001
+            pass
     txt = json.dumps(obj, ensure_ascii=False, indent=1 if pretty else None,
                      separators=None if pretty else (",", ":"))
     path.write_text(txt + "\n", encoding="utf-8")
+    CHANGED.append(path.name)
+    return True
 
 
 # ----------------------------------------------------------------------------- dbFCZ
 SECTION_CODES = [
-    ("Liga", "L"), ("Barrage", "L"), ("Final", "L"), ("Cup", "C"), ("Internat", "I"),
+    ("weitere", "P"), ("Liga", "L"), ("Barrage", "L"), ("Final", "L"), ("Cup", "C"), ("Internat", "I"),
     ("Europ", "I"), ("Freundschaft", "F"), ("Test", "F"),
 ]
 
@@ -101,7 +118,7 @@ def discover_seasons() -> list[int]:
 
 
 def parse_season(sid: int) -> dict:
-    full = fetch(f"{DB}saison.php?saison_id={sid}&m=1&c=1&lc=1&i=1&p=0&f=1&s=1")
+    full = fetch(f"{DB}saison.php?saison_id={sid}&m=1&c=1&lc=1&i=1&p=1&f=1&s=1")
     time.sleep(DELAY)
     base = fetch(f"{DB}saison.php?saison_id={sid}")
     out: dict = {"id": sid, "label": None, "league": None, "rank": None, "note": None,
@@ -209,7 +226,7 @@ def parse_home() -> dict:
     res["total"] = int(tm.group(1)) if tm else None
     titles = {}
     for label in ["Schweizer Meister", "Cupsiege", "Meister ChL / NLB / 1. Liga", "Ligacup-Siege"]:
-        mm = re.search(re.escape(label) + r"\s*\((\d+)\)(.*?)</p>", t, re.S)
+        mm = re.search(re.escape(label) + r"\s*(?:<span[^>]*>)?\s*\((\d+)\)\s*(?:</span>)?\s*</h3>\s*<p>(.*?)</p>", t, re.S)
         if mm:
             titles[label] = [int(y) for y in re.findall(r"\b(1[89]\d\d|20\d\d)\b", strip(mm.group(2)))]
     res["titles"] = titles
@@ -244,6 +261,11 @@ def build_db(full: bool):
     for n, sid in enumerate(todo, 1):
         try:
             s = parse_season(sid)
+            old_p = CACHE / f"{sid}.json"
+            if old_p.exists():  # guard against silent data loss from a broken/blocked page
+                old = json.loads(old_p.read_text())
+                if len(s["matches"]) < 0.9 * len(old["matches"]) or (old["players"] and not s["players"]):
+                    raise RuntimeError(f"refusing to shrink season {sid}: {len(old['matches'])} -> {len(s['matches'])}")
             write_json(CACHE / f"{sid}.json", s)
             log(f"[{n}/{len(todo)}] season {sid} {s['label']}: {len(s['matches'])} matches, {len(s['players'])} players")
         except Exception as e:  # noqa: BLE001
@@ -262,7 +284,8 @@ def assemble_db():
         teams.update({int(k): v for k, v in s["teams"].items()})
         for m in s["matches"]:
             row = [m[0], m[1], s["id"], *m[2:]]
-            if row[7] == "O":  # older cache: "internationale Spiele" section
+            if row[7] == "O" and re.search(r"cup|league|ifc|uefa|messe|intertoto|mitropa|europa|champions",
+                                            row[8] or "", re.I):  # older cache: "internationale Spiele" section
                 row[7] = "I"
             matches[m[0]] = row
         start = min((m[1] for m in s["matches"] if m[1]), default=None)
@@ -323,10 +346,13 @@ def build_forum():
     def seen(slug, title, forum, author=None, at=None, heat=0):
         if not slug:
             return
-        e = arch["topics"].setdefault(slug, {"title": title, "forum": forum, "first": now, "n": 0, "heat": 0})
-        e.update(title=title, forum=forum or e.get("forum"), last=now)
-        e["n"] += 1
+        e = arch["topics"].setdefault(slug, {"title": title, "forum": forum, "first": now, "heat": 0})
+        e.pop("n", None)
+        e.update(title=title, forum=forum or e.get("forum"))
         e["heat"] = max(e.get("heat", 0), heat or 0)
+        if at and at != e.get("lastPost"):
+            e["last"] = at
+        e.setdefault("last", at or now)
         if author:
             e["author"] = author
         if at:
@@ -341,11 +367,14 @@ def build_forum():
         seen(x["slug"], x["title"], x["forumName"], at=x.get("createdAt"))
     for x in liked:
         if x.get("id"):
-            arch["liked"][str(x["id"])] = {**x, "seen": now}
+            arch["liked"].setdefault(str(x["id"]), {"seen": now}).update(x)
     # keep the archive bounded
     arch["liked"] = dict(sorted(arch["liked"].items(), key=lambda kv: -(kv[1].get("likes") or 0))[:400])
-    if p.get("matchMood"):
-        arch["mood"].append([now, p["matchMood"].get("score"), p["matchMood"].get("emoji")])
+    mm = p.get("matchMood")
+    last = arch["mood"][-1] if arch["mood"] else None
+    if mm and (not last or last[1] != mm.get("score") or
+               (dt.datetime.fromisoformat(now) - dt.datetime.fromisoformat(last[0])).total_seconds() > 6 * 3600):
+        arch["mood"].append([now, mm.get("score"), mm.get("emoji")])
         arch["mood"] = arch["mood"][-500:]
     write_json(ap, arch)
     log(f"forum: {len(forums)} forums, {len(trending)} trending, archive {len(arch['topics'])} topics")
@@ -417,7 +446,10 @@ def main():
         except Exception as e:  # noqa: BLE001  one broken source must not kill the rest
             ok = False
             log(f"STEP {s} FAILED: {e}")
-    write_json(meta_p, meta, pretty=True)
+    if CHANGED:
+        meta["changed"] = sorted(set(CHANGED))
+        write_json(meta_p, meta, pretty=True)
+    log("changed:", CHANGED or "nothing")
     sys.exit(0 if ok else 1)
 
 

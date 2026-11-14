@@ -29,13 +29,15 @@ jobs:
           SCHED: ${{ github.event.schedule }}
           MODE: ${{ github.event.inputs.mode }}
         run: |
+          rc=0
           if [ "$SCHED" = "23 3 * * 1" ] || [ "$MODE" = "full" ]; then
-            python scraper/build.py --full || true
+            python scraper/build.py --full || rc=$?
           elif [ "$SCHED" = "41 */6 * * *" ] || [ "$MODE" = "seasons" ]; then
-            python scraper/build.py || true
+            python scraper/build.py || rc=$?
           else
-            python scraper/build.py --only home,forum,fotmob || true
+            python scraper/build.py --only home,forum,fotmob || rc=$?
           fi
+          echo "BUILD_RC=$rc" >> "$GITHUB_ENV"
       - name: Commit if changed
         run: |
           git config user.name "fcz-radar-bot"
@@ -43,4 +45,9 @@ jobs:
           git add data
           if git diff --cached --quiet; then echo "no changes"; exit 0; fi
           git commit -m "data: refresh $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push
+          git pull --rebase -q && git push
+      - name: Fail visibly if a source broke (data that did build is already committed)
+        if: env.BUILD_RC != '0'
+        run: |
+          echo "::error::scraper exited with $BUILD_RC — check the 'Build data' log for 'STEP ... FAILED'"
+          exit 1
