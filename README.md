@@ -19,9 +19,14 @@ It is not affiliated with FC Zürich. No club logo is used as branding.
   public pages using only the built-in `GITHUB_TOKEN`. Nothing secret is stored anywhere.
 - **Be gentle with hobby sites.** dbFCZ is crawled fully once a week, with a delay between requests. Otherwise only
   the current seasons are refreshed (every 6h). The forum front page is read once an hour.
-- **Privacy.** Only data that is already public on the forum front page is used. Supporter names (which contain
-  e-mail addresses) and avatar URLs are deliberately not copied.
+- **Privacy / respect.** Only data that is already public on the forum front page is used. Supporter names (which
+  contain e-mail addresses), avatar URLs and post excerpts are never archived. Club crests are not hotlinked;
+  neutral monograms are used instead. There are no cookies and no tracking. The footer links an issue tracker for
+  takedown requests.
 - **Phone first.** Bottom tab bar, bottom-sheet details, works offline (service worker), installable (PWA).
+- **Review process.** The draft went through three rounds of design and feature review by a Fable subagent
+  (2026-11-14). Results: a match-day hero, combo search, a daily quiz, provisional FotMob results bridging the dbFCZ lag,
+  and a hygiene pass for a public site.
 
 ## Success bar
 - Opens in under 2 s on a phone over 4G, and the search answers as you type.

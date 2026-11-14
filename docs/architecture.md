@@ -15,7 +15,7 @@ phone browser ── index.html + app.js ── fetch data/*.json ────�
 | `data/dbfcz_seasons/` | dbFCZ | raw per-season parse (cache for incremental refresh) |
 | `data/dbfcz_home.json` | dbFCZ start page | birthdays, anniversaries, titles, hall of fame |
 | `data/forum.json` | fczforum.ch/forum (Inertia `data-page` JSON) | sections, trending, most liked, stats, match mood |
-| `data/forum_archive.json` | accumulated | every topic seen on the front page, liked posts, mood history |
+| `data/forum_archive.json` | accumulated | every topic seen on the front page + match-mood history (post excerpts are deliberately NOT archived) |
 | `data/fotmob.json` | FotMob team endpoint | fixtures, table, squad, ICS link |
 
 Row layouts are compact arrays. The field order is written in `db.json → fields`.
