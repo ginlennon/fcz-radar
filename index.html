@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FCZ Radar</title>
+<meta name="description" content="Inoffizielle Fan-App: Suche und Infos aus dbFCZ und FCZforum an einem Ort.">
+<meta name="theme-color" content="#0e3f86">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
+<link rel="stylesheet" href="styles.css?v=1">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/heute" aria-label="Start">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="16" cy="16" r="7.5" fill="none" stroke="currentColor" stroke-width="2" opacity=".55"/><path d="M16 16 L27 8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><circle cx="16" cy="16" r="2.4" fill="currentColor"/></svg>
+    <span>FCZ&nbsp;Radar</span>
+  </a>
+  <button class="search-trigger" id="searchOpen" aria-label="Suche öffnen">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <span>Spieler, Gegner, Datum, Thema …</span>
+  </button>
+</header>
+
+<main id="view" tabindex="-1"><div class="loading">Lade Daten …</div></main>
+
+<div class="search-layer" id="searchLayer" hidden>
+  <div class="search-bar">
+    <input id="q" type="search" autocomplete="off" enterkeyhint="search" placeholder="z.B. Kuhn · Basel · 6:2 · 1976 · 14.11.1967">
+    <button id="searchClose" class="ghost" aria-label="Suche schliessen">Abbrechen</button>
+  </div>
+  <div class="search-results" id="results"></div>
+</div>
+
+<nav class="tabs" id="tabs">
+  <a href="#/heute" data-tab="heute"><svg viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v9h-5v-6H9v6H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>Heute</span></a>
+  <a href="#/saison" data-tab="saison"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 10h16M9 3v4M15 3v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Saison</span></a>
+  <a href="#/archiv" data-tab="archiv"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Archiv</span></a>
+  <a href="#/spieler" data-tab="spieler"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Spieler</span></a>
+  <a href="#/forum" data-tab="forum"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>Forum</span></a>
+</nav>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true">
+    <button class="sheet-grip" data-close aria-label="Schliessen"></button>
+    <div id="sheetBody"></div>
+  </div>
+</div>
+
+<form id="dbfczForm" action="https://www.dbfcz.ch/suche.php" method="post" target="_blank" hidden>
+  <input name="suche_string"><input name="suche_radio">
+</form>
+
+<script src="app.js?v=1" type="module"></script>
+</body>
+</html>
