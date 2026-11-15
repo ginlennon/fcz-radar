@@ -581,34 +581,155 @@ async function renderSaisonArchiv(sid, seq) {
     ${rows.map(([pid, r], i) => `<tr><td>${i + 1}</td><td><a class="ell" href="#/spieler/${pid}">${esc(IX.player[pid]?.[1] || pid)}</a></td><td>${r[1]}</td><td class="hm">${r[2]}</td><td>${r[5]}</td><td><b>${r[6]}</b></td></tr>`).join('')}</tbody></table>`);
 }
 
-// ---------------------------------------------------------------- Spieler
-const SORTS = { apps: [2, 'Spiele'], goals: [4, 'Tore'], liga: [3, 'Liga'], seasons: [9, 'Saisons'] };
-function playerList(sort, f, page) {
-  const col = SORTS[sort][0];
-  let ps = S.db.players.slice();
-  if (f) { const n = norm(f); ps = ps.filter((p) => norm(p[1]).includes(n)); }
-  ps.sort((a, b) => b[col] - a[col] || b[2] - a[2]);
-  return `<ul class="list">${ps.slice(0, page * 50).map((p, i) => `<li><a class="item" href="#/spieler/${p[0]}"><span class="rank num">${i + 1}</span>
-   <span class="grow"><div class="t">${esc(p[1])}</div><div class="s num">${seasonLabel(p[7]).slice(0, 4)}–${seasonLabel(p[8]).slice(-4)} · ${p[9]} Saisons</div></span>
-   <span class="kpi num"><b>${p[col]}</b><br>${SORTS[sort][1]}</span></a></li>`).join('') || '<div class="empty">Kein Spieler gefunden</div>'}</ul>
-   ${ps.length > page * 50 ? `<a class="btn morebtn" href="#/spieler?s=${sort}&p=${page + 1}${f ? '&f=' + encodeURIComponent(f) : ''}">mehr laden</a>` : ''}`;
+// ---------------------------------------------------------------- Spieler: sortable ranking mask
+// detail row (data/player_details.json, from the dbFCZ player pages), see `fields` in that file
+const PD = { birth: 0, death: 1, nat: 2, pos: 3, min: 4, minLiga: 5, minAll: 10, subIn: 11, subOut: 12, ast: 13, og: 14, y: 15, yr: 16, r: 17, d0: 18, m0: 19, d1: 20, m1: 21 };
+async function playerDetails() {
+  if (!S.pd) S.pd = await getJSON('data/player_details.json').then((j) => j.players || {}).catch(() => ({}));
+  return S.pd;
 }
+const days = (a, b) => (a && b ? Math.round((Date.parse(b) - Date.parse(a)) / 864e5) : null);
+const age = (b, at) => { const n = days(b, at); return n != null && n > 13 * 365 && n < 50 * 365 ? n : null; }; // drop source typos (birth after debut)
+const fmtAge = (d) => `${Math.floor(d / 365.25)} J. ${Math.floor(d % 365.25)} T.`;
+const fmtMin = (v) => fmtN(Math.round(v)); // the unit line says "Minuten"; 63'555' would read badly
+const fmtWeeks = (d) => fmtN(Math.round(d / 7));
+// v(p, d) -> number|null (null = not ranked). d = detail row or undefined. asc: smaller is better. min: default minimum Pflichtspiele
+const METRICS = {
+  apps: { g: 'Einsätze', l: 'Pflichtspiele', u: 'Spiele', v: (p) => p[2] },
+  liga: { g: 'Einsätze', l: 'Ligaspiele', u: 'Liga', v: (p) => p[3] },
+  tests: { g: 'Einsätze', l: 'Testspiele', u: 'Tests', v: (p) => p[6] },
+  joker: { g: 'Einsätze', l: 'Joker (eingewechselt)', u: 'eingew.', d: 1, v: (p, d) => d?.[PD.subIn] },
+  goals: { g: 'Tore', l: 'Tore (Pflichtspiele)', u: 'Tore', v: (p) => p[4] },
+  ligagoals: { g: 'Tore', l: 'Ligatore', u: 'Ligatore', v: (p) => p[5] },
+  gpg: { g: 'Tore', l: 'Tore pro Pflichtspiel', u: 'pro Spiel', v: (p) => (p[2] ? p[4] / p[2] : null), f: (v) => v.toFixed(2), min: 20 },
+  mpg: { g: 'Tore', l: 'Minuten pro Tor', u: 'Min. pro Tor', d: 1, asc: 1, v: (p, d) => (p[4] >= 5 && d?.[PD.min] ? d[PD.min] / p[4] : null), f: fmtMin, min: 20, note: 'ab 5 Toren' },
+  g90: { g: 'Tore', l: 'Tore pro 90 Minuten', u: 'pro 90\'', d: 1, v: (p, d) => (d?.[PD.min] >= 900 ? p[4] * 90 / d[PD.min] : null), f: (v) => v.toFixed(2), min: 20, note: 'ab 900 Minuten' },
+  ast: { g: 'Tore', l: 'Assists', u: 'Assists', d: 1, v: (p, d) => d?.[PD.ast] },
+  scorer: { g: 'Tore', l: 'Skorerpunkte', u: 'Punkte', d: 1, v: (p, d) => (d ? p[4] + (d[PD.ast] || 0) : null) },
+  minutes: { g: 'Spielzeit', l: 'Minuten (Pflicht)', u: 'Minuten', d: 1, v: (p, d) => d?.[PD.min], f: fmtMin },
+  minall: { g: 'Spielzeit', l: 'Minuten (alle Spiele)', u: 'Minuten', d: 1, v: (p, d) => d?.[PD.minAll], f: fmtMin },
+  avgmin: { g: 'Spielzeit', l: 'Ø Minuten pro Spiel', u: 'Min. pro Spiel', d: 1, v: (p, d) => (p[2] && d?.[PD.min] ? d[PD.min] / p[2] : null), f: fmtMin, min: 20 },
+  span: { g: 'Spielzeit', l: 'FCZ-Zeit (Wochen)', u: 'Wochen', d: 1, v: (p, d) => days(d?.[PD.d0], d?.[PD.d1]), f: fmtWeeks, sub: (p, d) => `${fmtD(d[PD.d0])} – ${fmtD(d[PD.d1])}` },
+  seasons: { g: 'Spielzeit', l: 'Saisons', u: 'Saisons', v: (p) => p[9] },
+  young: { g: 'Alter', l: 'Jüngste beim Debüt', u: 'Alter', d: 1, asc: 1, v: (p, d) => age(d?.[PD.birth], d?.[PD.d0]), f: fmtAge, sub: (p, d) => `Debüt ${fmtD(d[PD.d0])}` },
+  old: { g: 'Alter', l: 'Älteste beim letzten Spiel', u: 'Alter', d: 1, v: (p, d) => age(d?.[PD.birth], d?.[PD.d1]), f: fmtAge, sub: (p, d) => `letztes Spiel ${fmtD(d[PD.d1])}` },
+  yellow: { g: 'Disziplin', l: 'Gelbe Karten', u: 'Gelb', d: 1, v: (p, d) => d?.[PD.y] },
+  red: { g: 'Disziplin', l: 'Platzverweise', u: 'Platzverw.', d: 1, v: (p, d) => (d ? (d[PD.r] || 0) + (d[PD.yr] || 0) : null) },
+};
+const PRESETS = [['minutes', 'Meiste Minuten'], ['span', 'Längste FCZ-Zeit'], ['mpg', 'Minuten pro Tor'], ['young', 'Jüngste Debütanten'], ['joker', 'Joker'], ['scorer', 'Skorer']];
+const POS = { T: ['Tor', /tor(h|w)/i], V: ['Abwehr', /verteid|abwehr/i], M: ['Mittelfeld', /mittelf/i], S: ['Sturm', /st(ü|u)rm|angriff/i] };
+const startYear = (sid) => +String(seasonLabel(sid)).slice(0, 4) || 0;
+const endYear = (sid) => { const l = String(seasonLabel(sid)); const m = l.match(/(\d{2,4})\s*$/); return m ? (m[1].length === 2 ? +(l.slice(0, 2) + m[1]) : +m[1]) : startYear(sid); };
+function rankState(q) {
+  const k = METRICS[q.get('s')] ? q.get('s') : 'apps', M = METRICS[k];
+  return { k, M, o: q.get('o') === 'asc' || q.get('o') === 'desc' ? q.get('o') : M.asc ? 'asc' : 'desc', pos: POS[q.get('pos')] ? q.get('pos') : '',
+    d: /^\d{4}$/.test(q.get('d') || '') ? q.get('d') : '', min: q.has('min') ? Math.max(0, +q.get('min') || 0) : M.min || 0,
+    akt: q.get('akt') === '1', f: q.get('f') || '', page: Math.max(1, +q.get('p') || 1) };
+}
+function rankQS(st, over = {}) {
+  const s = { ...st, ...over }, M = METRICS[s.k], p = new URLSearchParams();
+  if (s.k !== 'apps') p.set('s', s.k);
+  if (s.o !== (M.asc ? 'asc' : 'desc')) p.set('o', s.o);
+  if (s.pos) p.set('pos', s.pos);
+  if (s.d) p.set('d', s.d);
+  if (s.min !== (M.min || 0)) p.set('min', s.min);
+  if (s.akt) p.set('akt', '1');
+  if (s.f) p.set('f', s.f);
+  if (s.page > 1) p.set('p', s.page);
+  const t = p.toString(); return '#/spieler' + (t ? '?' + t : '');
+}
+function rankRows(st) {
+  const { M } = st, pd = S.pd || {}, cur = S.db.seasons[S.db.seasons.length - 1]?.id;
+  const n = norm(st.f), dec = +st.d;
+  const out = [];
+  for (const p of S.db.players) {
+    const d = pd[p[0]];
+    if (p[2] < st.min) continue;
+    if (n && !norm(p[1]).includes(n)) continue;
+    if (st.akt && p[8] !== cur) continue;
+    if (dec && (startYear(p[7]) > dec + 9 || endYear(p[8]) < dec)) continue;
+    if (st.pos && !POS[st.pos][1].test(d?.[PD.pos] || '')) continue;
+    const v = M.v(p, d);
+    if (v == null || Number.isNaN(v)) continue;
+    out.push([v, p, d]);
+  }
+  const dir = st.o === 'asc' ? 1 : -1;
+  out.sort((a, b) => dir * (a[0] - b[0]) || b[1][2] - a[1][2]);
+  return out;
+}
+function rankList(st) {
+  if ((st.M.d || st.pos) && !S.pd) return '<div class="skel"></div><div class="skel"></div><div class="skel short"></div>';
+  const rows = rankRows(st), fmt = st.M.f || fmtN;
+  let rank = 0, prev = null;
+  const li = rows.slice(0, st.page * 50).map(([v, p, d], i) => {
+    if (v !== prev) { rank = i + 1; prev = v; }
+    const pos = d?.[PD.pos] ? ' · ' + esc(d[PD.pos]) : '';
+    const sub = st.M.sub && d ? esc(st.M.sub(p, d)) : `${startYear(p[7])}–${endYear(p[8])}${pos} · ${p[2]} Pfl.`;
+    return `<li><a class="item" href="#/spieler/${p[0]}"><span class="rank num">${rank}</span>
+     <span class="grow"><div class="t">${esc(p[1])}</div><div class="s num">${sub}</div></span>
+     <span class="kpi num"><b>${fmt(v)}</b><br>${esc(st.M.u)}</span></a></li>`;
+  }).join('');
+  return `<div class="rk-count small muted">${fmtN(rows.length)} Spieler${st.M.note ? ' · ' + esc(st.M.note) : ''}</div><ul class="list">${li || '<div class="empty">Kein Spieler passt zu diesen Filtern</div>'}</ul>
+   ${rows.length > st.page * 50 ? `<a class="btn morebtn" href="${rankQS(st, { page: st.page + 1 })}">mehr laden</a>` : ''}`;
+}
+function rankMask(st) {
+  const groups = {};
+  for (const [k, M] of Object.entries(METRICS)) (groups[M.g] ||= []).push(`<option value="${k}" ${k === st.k ? 'selected' : ''}>${esc(M.l)}</option>`);
+  const decs = []; for (let y = 1920; y <= +zurichISO().slice(0, 4); y += 10) decs.push(y);
+  const mins = [...new Set([0, 10, 25, 50, 100, 200, st.min])].sort((a, b) => a - b);
+  return `<div class="rk">
+    <div class="rk-line"><label class="rk-lab" for="rk-k">Sortieren nach</label>
+      <select id="rk-k" data-rk="k">${Object.entries(groups).map(([g, o]) => `<optgroup label="${g}">${o.join('')}</optgroup>`).join('')}</select>
+      <button type="button" class="btn rk-o" data-rk="o" aria-label="Reihenfolge umkehren">${st.o === 'asc' ? '↑ aufsteigend' : '↓ absteigend'}</button></div>
+    <div class="chips"><button type="button" class="chip ${!st.pos ? 'on' : ''}" data-rk="pos" data-v="">Alle</button>${Object.entries(POS).map(([k, [l]]) => `<button type="button" class="chip ${st.pos === k ? 'on' : ''}" data-rk="pos" data-v="${k}">${l}</button>`).join('')}
+      <span class="sep"></span><button type="button" class="chip ${st.akt ? 'on' : ''}" data-rk="akt">nur aktuelle Saison</button></div>
+    <div class="rk-line">
+      <select data-rk="d" aria-label="aktiv im Jahrzehnt"><option value="">alle Jahrzehnte</option>${decs.map((y) => `<option value="${y}" ${+st.d === y ? 'selected' : ''}>aktiv in den ${String(y).slice(2)}ern</option>`).join('')}</select>
+      <select data-rk="min" aria-label="Mindestzahl Pflichtspiele">${mins.map((m) => `<option value="${m}" ${m === st.min ? 'selected' : ''}>${m ? `ab ${m} Pflichtspielen` : 'alle Spieler'}</option>`).join('')}</select></div>
+    <input type="search" id="pf" data-rk="f" placeholder="Name filtern …" value="${esc(st.f)}" aria-label="Spieler filtern"></div>`;
+}
+let RK = null; // current state of the mask on screen
+function rankUpdate(over, full) {
+  RK = { ...RK, page: 1, ...over };
+  if (over.k) { const M = METRICS[RK.k]; RK.M = M; RK.o = M.asc ? 'asc' : 'desc'; RK.min = M.min || 0; }
+  history.replaceState(null, '', rankQS(RK)); lastHash = location.hash;
+  if (full) { const m = $('#rkmask'); if (m) m.innerHTML = rankMask(RK); }
+  const pr = $('#rkpre'); if (pr) pr.innerHTML = presetChips(RK);
+  const el = $('#plist'); if (el) el.innerHTML = rankList(RK);
+}
+const presetChips = (st) => PRESETS.map(([k, l]) => `<button type="button" class="chip ${st.k === k ? 'on' : ''}" data-rk="k" data-v="${k}">${l}</button>`).join('');
 function renderSpieler(q) {
-  const sort = SORTS[q.get('s')] ? q.get('s') : 'apps', page = Math.max(1, +q.get('p') || 1), f = q.get('f') || '';
-  const chips = Object.entries(SORTS).map(([k, [, l]]) => `<a class="chip ${sort === k ? 'on' : ''}" href="#/spieler?s=${k}${f ? '&f=' + encodeURIComponent(f) : ''}">${l === 'Spiele' ? 'Pflichtspiele' : l === 'Liga' ? 'Ligaspiele' : l}</a>`).join('');
+  const st = RK = rankState(q);
   const hof = (S.home?.hall_of_fame || []).filter((h) => IX.player[h.id]);
   view.innerHTML = `<h1 class="page-title">Spieler</h1><p class="sub gap">${fmtN(S.db.players.length)} Spieler mit Einsätzen im Archiv · Quelle dbFCZ</p>
   <a class="btn primary morebtn" style="margin-bottom:12px" href="#/vergleich/0/0">⇄ Zwei Spieler vergleichen</a>
   ${hof.length ? card('Hall of Fame (FCZ-Museum)', `<div class="chips">${hof.map((h) => `<a class="chip" href="#/spieler/${h.id}">${esc(h.name)}</a>`).join('')}</div>`) : ''}
-  <input type="search" id="pf" placeholder="Name filtern …" value="${esc(f)}" aria-label="Spieler filtern" style="width:100%;margin-bottom:10px">
-  <div class="chips">${chips}</div>
-  <section class="card" id="plist">${playerList(sort, f, page)}</section>${foot()}`;
-  const inp = $('#pf'); let tmo;
-  inp.addEventListener('input', () => {
-    clearTimeout(tmo);
-    tmo = setTimeout(() => { history.replaceState(null, '', `#/spieler?s=${sort}${inp.value ? '&f=' + encodeURIComponent(inp.value) : ''}`); lastHash = location.hash; $('#plist').innerHTML = playerList(sort, inp.value, 1); }, 200);
-  });
+  <h2 class="grp">Rangliste</h2><div class="chips" id="rkpre">${presetChips(st)}</div>
+  <section class="card" id="rkmask">${rankMask(st)}</section>
+  <section class="card" id="plist">${rankList(st)}</section>
+  <p class="hint">Minuten, Assists, Karten und Einwechslungen stammen von den dbFCZ-Spielerseiten. Für frühe Jahrzehnte sind sie teils lückenhaft erfasst. Die FCZ-Zeit zählt vom ersten bis zum letzten Einsatz, Testspiele inklusive.
+  Fixe Top-Listen gibt es auch bei <a href="https://www.dbfcz.ch/topx.php" target="_blank" rel="noopener">dbFCZ TopX</a>.</p>${foot()}`;
+  if (!S.pd) playerDetails().then(() => { if (view.dataset.r === 'spieler' && $('#plist')) $('#plist').innerHTML = rankList(RK); });
 }
+document.addEventListener('change', (e) => {
+  const el = e.target.closest('[data-rk]'); if (!el || el.tagName !== 'SELECT') return;
+  const k = el.dataset.rk;
+  rankUpdate(k === 'k' ? { k: el.value } : k === 'min' ? { min: +el.value } : { [k]: el.value }, k === 'k');
+});
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('button[data-rk]'); if (!el) return;
+  const k = el.dataset.rk;
+  if (k === 'k') rankUpdate({ k: el.dataset.v }, true);
+  else if (k === 'o') rankUpdate({ o: RK.o === 'asc' ? 'desc' : 'asc' }, true);
+  else if (k === 'pos') rankUpdate({ pos: el.dataset.v }, true);
+  else if (k === 'akt') rankUpdate({ akt: !RK.akt }, true);
+});
+let rkT;
+document.addEventListener('input', (e) => {
+  if (e.target.id !== 'pf' || !RK) return;
+  clearTimeout(rkT); const v = e.target.value;
+  rkT = setTimeout(() => rankUpdate({ f: v }), 200);
+});
 async function renderPlayer(id, seq) {
   const p = IX.player[id];
   if (!p) { view.innerHTML = `<div class="empty">Spieler nicht im Archiv. <a href="${dbfczUrl('spieler', id)}" target="_blank" rel="noopener">bei dbFCZ ansehen</a></div>`; return; }
@@ -624,6 +745,7 @@ async function renderPlayer(id, seq) {
       <div class="stat"><b>${p[9]}</b><span>Saisons</span></div>
     </div>
     <p class="sub gap">Liga: ${p[3]} Spiele, ${p[5]} Tore · ${p[2] ? (p[4] / p[2]).toFixed(2) : '–'} Tore pro Pflichtspiel · ${p[6]} Testspiele</p>
+    <div id="pdet"></div>
     <div id="pseas">${loadingCard('Karriere beim FCZ')}</div>
     ${sq ? card('Aktuelle Saison', `<div class="grid3 keep"><div class="stat"><b>${sq.goals ?? 0}</b><span>Tore</span></div><div class="stat"><b>${sq.assists ?? 0}</b><span>Assists</span></div><div class="stat"><b>${sq.age ?? '–'}</b><span>Alter</span></div></div>`) : ''}
     <div id="wiki">${loadingCard('Wikipedia')}</div>
@@ -634,6 +756,7 @@ async function renderPlayer(id, seq) {
       <a href="#/vergleich/${id}/0">⇄ Vergleichen</a>
       <button type="button" data-share>${ICON.share} Teilen</button></div>`)}${foot()}`;
   wikiCard(p[1], seq);
+  playerDetails().then((pd) => { const el = seq === routeSeq && $('#pdet'); if (el) el.innerHTML = detailCard(p, pd[id]); });
   const ps = (await playerSeasons())[id] || [];
   if (seq !== routeSeq) return;
   const max = Math.max(1, ...ps.map((r) => r[1]));
@@ -642,6 +765,29 @@ async function renderPlayer(id, seq) {
     <div class="row between small muted"><span>${esc(seasonLabel(ps[0]?.[0]))}</span><span>Pflichtspiele pro Saison</span><span>${esc(seasonLabel(ps[ps.length - 1]?.[0]))}</span></div>
     <table class="t" style="margin-top:10px"><thead><tr><th></th><th>Saison</th><th>Pfl.</th><th class="hm">Liga</th><th class="hm">Cup</th><th class="hm">Eur.</th><th>Test</th><th>Tore</th></tr></thead><tbody>
     ${ps.slice().reverse().map((r) => `<tr><td></td><td><a href="#/saisonarchiv/${r[0]}">${esc(seasonLabel(r[0]))}</a></td><td>${r[1]}</td><td class="hm">${r[2]}</td><td class="hm">${r[3]}</td><td class="hm">${r[4]}</td><td>${r[5]}</td><td><b>${r[6]}</b></td></tr>`).join('')}</tbody></table>`);
+}
+function detailCard(p, d) {
+  if (!d) return '';
+  const opp = (mid) => { const m = IX.matchById?.get(mid); return m ? ` vs. ${esc(teamName(res(m).opp))}` : ''; };
+  const link = (mid, date) => (IX.matchById?.has(mid) ? `<a href="#/spiel/${mid}">${fmtD(date)}</a>` : fmtD(date));
+  const span = days(d[PD.d0], d[PD.d1]), a0 = age(d[PD.birth], d[PD.d0]), a1 = age(d[PD.birth], d[PD.d1]);
+  const rk = (k) => { const st = { M: METRICS[k], min: 0, o: METRICS[k].asc ? 'asc' : 'desc' }; const r = rankRows(st); const i = r.findIndex((x) => x[1] === p); return i >= 0 ? `<a class="pill" href="#/spieler?s=${k}">#${i + 1}</a>` : ''; };
+  const cards = (d[PD.y] || 0) + (d[PD.yr] || 0) + (d[PD.r] || 0);
+  return card('Spielzeit & Details', `<div class="grid3 keep">
+      <div class="stat"><b>${d[PD.min] != null ? fmtMin(d[PD.min]) : '–'}</b><span>Pflicht-Minuten</span> ${rk('minutes')}</div>
+      <div class="stat"><b>${span != null ? fmtWeeks(span) : '–'}</b><span>Wochen beim FCZ</span> ${span != null ? rk('span') : ''}</div>
+      <div class="stat"><b>${d[PD.ast] ?? '–'}</b><span>Assists</span></div></div>
+    <dl class="kv">
+      ${d[PD.d0] ? `<dt>Debüt</dt><dd>${link(d[PD.m0], d[PD.d0])}${opp(d[PD.m0])}${a0 != null ? ` · mit ${fmtAge(a0)}` : ''}</dd>` : ''}
+      ${d[PD.d1] ? `<dt>Letztes Spiel</dt><dd>${link(d[PD.m1], d[PD.d1])}${opp(d[PD.m1])}${a1 != null ? ` · mit ${fmtAge(a1)}` : ''}</dd>` : ''}
+      ${p[4] && d[PD.min] ? `<dt>Minuten pro Tor</dt><dd>${fmtMin(d[PD.min] / p[4])} Min.</dd>` : ''}
+      ${p[2] && d[PD.min] ? `<dt>Ø pro Pflichtspiel</dt><dd>${fmtMin(d[PD.min] / p[2])} Min.</dd>` : ''}
+      <dt>Ein-/ausgewechselt</dt><dd>${d[PD.subIn] ?? 0} / ${d[PD.subOut] ?? 0}</dd>
+      ${cards ? `<dt>Karten</dt><dd>${d[PD.y] || 0}× Gelb${d[PD.yr] ? `, ${d[PD.yr]}× Gelb-Rot` : ''}${d[PD.r] ? `, ${d[PD.r]}× Rot` : ''}</dd>` : ''}
+      ${d[PD.pos] ? `<dt>Position</dt><dd>${esc(d[PD.pos])}</dd>` : ''}
+      ${d[PD.nat] ? `<dt>Nationalität</dt><dd>${esc(d[PD.nat])}</dd>` : ''}
+      ${d[PD.birth] ? `<dt>Geboren</dt><dd>${fmtD(d[PD.birth])}${d[PD.death] ? ` · † ${fmtD(d[PD.death])}` : ''}</dd>` : ''}
+    </dl>`);
 }
 async function wikiCard(name, seq) {
   const link = `https://de.wikipedia.org/w/index.php?search=${encodeURIComponent(name + ' Fussballspieler')}`;
@@ -691,7 +837,10 @@ async function renderVergleich(ida, idb, seq) {
        <a class="ghost small" href="#/vergleich/${side === 'a' ? `0/${other || 0}` : `${other || 0}/0`}">ändern</a></div>`
     : `<div class="cmp-p"><span class="avatar q">?</span><b class="muted">Spieler ${side === 'a' ? 'A' : 'B'}</b><span class="s">wählen ↓</span></div>`;
   let body = '';
+  if (A && B) await playerDetails();
+  if (seq !== routeSeq) return;
   if (A && B) {
+    const da = S.pd?.[A[0]], db = S.pd?.[B[0]];
     const rk = (p) => S.db.players.filter((x) => x[2] > p[2]).length + 1;
     const gk = (p) => S.db.players.filter((x) => x[4] > p[4]).length + 1;
     const rows = [
@@ -699,10 +848,17 @@ async function renderVergleich(ida, idb, seq) {
       ['Tore pro Pflichtspiel', A[2] ? A[4] / A[2] : 0, B[2] ? B[4] / B[2] : 0, (v) => v.toFixed(2)],
       ['Saisons', A[9], B[9]], ['Testspiele', A[6], B[6]],
     ];
+    if (da && db) {
+      const ex = [['Einsatzminuten (Pflicht)', 'minutes'], ['Minuten pro Tor', 'mpg'], ['Assists', 'ast'], ['FCZ-Zeit in Wochen', 'span']];
+      for (const [l, k] of ex) {
+        const M = METRICS[k], x = M.v(A, da), y = M.v(B, db);
+        if (x != null && y != null) rows.push([l, k === 'span' ? Math.round(x / 7) : x, k === 'span' ? Math.round(y / 7) : y, k === 'span' ? fmtN : M.f || fmtN, !!M.asc]);
+      }
+    }
     let wa = 0, wb = 0;
-    for (const [, x, y] of rows) { if (x > y) wa++; else if (y > x) wb++; }
+    for (const [, x, y, , lw] of rows) { if (x === y) continue; if ((x > y) !== !!lw) wa++; else wb++; }
     const lead = wa === wb ? `Unentschieden: je ${wa} Kategorien` : `<b>${esc((wa > wb ? A : B)[1])}</b> liegt in ${Math.max(wa, wb)} von ${rows.length} Kategorien vorne`;
-    body = card('Direktvergleich', `<div class="cmp-lead">${lead}</div>${rows.map(([l, x, y, f]) => cmpRow(l, x, y, f)).join('')}
+    body = card('Direktvergleich', `<div class="cmp-lead">${lead}</div>${rows.map(([l, x, y, f, lw]) => cmpRow(l, x, y, f, lw)).join('')}
       ${cmpRow('All-time-Rang Pflichtspiele', rk(A), rk(B), (v) => '#' + v, true)}${cmpRow('All-time-Rang Tore', gk(A), gk(B), (v) => '#' + v, true)}`)
       + `<div id="cmp-career">${loadingCard('Karriere im Vergleich')}</div>`
       + card('Mehr', `<div class="ext"><a href="#/vergleich/${B[0]}/${A[0]}">⇄ Seiten tauschen</a><button type="button" data-share>${ICON.share} Vergleich teilen</button>
@@ -825,6 +981,9 @@ function buildSearch() {
   const gc = findTeam('Grasshoppers');
   const pages = [['Tabelle', '#/saison?t=tabelle', 'tabelle rangliste'], ['Spielplan', '#/saison?t=spiele', 'spielplan fixtures kalender termine'], ['Kader', '#/saison?t=kader', 'kader team squad'], ['Rekorde & Serien', '#/archiv?m=rekorde', 'rekorde serien hoechste siege zeitmaschine'], ['Platzierungen aller Saisons', '#/archiv?m=saisons', 'saisons platzierungen meister titel'], ['Stadtderby FCZ – GC', '#/gegner/' + gc, 'derby stadtderby'], ['Tagesquiz', '#/heute', 'quiz tagesquiz raten'], ['Spielervergleich', '#/vergleich/0/0', 'vergleich vergleichen versus duell spieler'], ['Forum-Puls', '#/forum', 'forum stimmung trending']];
   for (const [t, h, k] of pages) E.push({ g: 'Seiten', t, s: 'Bereich der App', h, k, w: 3 });
+  const RKW = { apps: 'einsätze meiste spiele', minutes: 'minuten spielzeit einsatzminuten meiste pflicht', minall: 'minuten alle spiele', avgmin: 'durchschnitt minuten', span: 'fcz-zeit wochen längste spielzeit dauer treue jahre', mpg: 'minuten pro tor effizienz knipser', g90: 'tore pro 90', young: 'jüngste debüt debütant alter', old: 'älteste alter', joker: 'joker einwechslung eingewechselt', yellow: 'gelbe karten verwarnung', red: 'rote karten platzverweis gelb-rot', ast: 'assists vorlagen', scorer: 'skorer scorer punkte tore assists', goals: 'torschützen meiste tore', gpg: 'tore pro spiel quote' };
+  E.push({ g: 'Seiten', t: 'Spieler-Rangliste', s: 'sortieren und filtern', h: '#/spieler', k: 'spieler rangliste sortieren bestenliste topliste top', w: 3 });
+  for (const [k, kw] of Object.entries(RKW)) E.push({ g: 'Seiten', t: 'Rangliste: ' + METRICS[k].l, s: 'Spieler sortieren und filtern', h: '#/spieler?s=' + k, k: norm(METRICS[k].l + ' ' + kw), w: 2.5 });
   searchIndex = E;
 }
 function hl(text, q) {

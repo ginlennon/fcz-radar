@@ -316,6 +316,105 @@ def assemble_db():
     log(f"db.json: {len(seasons)} seasons, {len(ms)} matches, {len(players)} players, {len(teams)} teams")
 
 
+# ----------------------------------------------------------------------------- dbFCZ player pages
+PLAYERS = DATA / "player_details.json"
+PFIELDS = ("birth,death,nat,pos,minPflicht,minLiga,minCup,minInt,minTest,appsAll,minAll,subIn,subOut,"
+           "assists,ownGoals,yellow,yellowRed,red,firstDate,firstMatch,lastDate,lastMatch")
+
+
+def _total_cells(t: str, after: int) -> list[str]:
+    i = t.find("TOTAL", after)
+    if i < 0:
+        return []
+    row = t[i:t.find("</tr>", i)]
+    return [strip(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", row, re.S)]
+
+
+def _num(s: str) -> int | None:
+    m = re.search(r"-?\d+", s.replace("'", ""))
+    return int(m.group()) if m else None
+
+
+def parse_player(pid: int) -> list:
+    t = fetch(DB + f"spieler.php?spieler_id={pid}")
+    if "<h2>" not in t:
+        raise RuntimeError("no player header")
+    life = re.search(r"</h2><p>\(([^)]*)\)</p>", t)
+    dates = re.findall(r"\d{1,2}\.\d{1,2}\.\d{4}", html.unescape(life.group(1))) if life else []
+    birth = parse_date(dates[0]) if dates else None
+    death = parse_date(dates[1]) if len(dates) > 1 else None
+
+    def info(label):
+        m = re.search(label + r"[^<]*:\s*</td><td[^>]*>(.*?)</td>", t, re.S)
+        return strip(m.group(1)) if m else None
+    nat, pos = info(r"Nationalit(?:&auml;|ä)t"), info("Standardposition")
+    first = last = (None, None)
+    k = t.find("Spiele f&uuml;r den FCZ")
+    if k >= 0:
+        blk = t[k:t.find("</table>", k)]
+        f = re.search(r"erstes Spiel:.*?spiel_id=(\d+)\">([\d.]+)<", blk, re.S)
+        l = re.search(r"letztes Spiel:.*?spiel_id=(\d+)\">([\d.]+)<", blk, re.S)
+        first = (parse_date(f.group(2)), int(f.group(1))) if f else first
+        last = (parse_date(l.group(2)), int(l.group(1))) if l else last
+    s = t.find("Spieler-Statistiken")
+    a = _total_cells(t, s) if s >= 0 else []
+    # (after TOTAL) pfl n, min | liga n, min | cup n, min | int n, min | test n, min | all n, min | subs n, in/out, rate
+    mins = [_num(a[i]) if len(a) > i else None for i in (1, 3, 5, 7, 9)]
+    apps_all, min_all = (_num(a[10]), _num(a[11])) if len(a) > 11 else (None, None)
+    sub_in = sub_out = 0
+    if len(a) > 13 and "/" in a[13]:
+        sub_in, sub_out = (_num(x) or 0 for x in a[13].split("/")[:2])
+    g = _total_cells(t, t.find("</table>", s) if s >= 0 else len(t)) if s >= 0 else []
+    # (after TOTAL) goals, rate | assists, - | liga | cup | int | own goals | yellow | yellow-red | red
+    gv = [_num(g[i]) if len(g) > i else None for i in (2, 10, 12, 14, 16)]
+    return [birth, death, nat, pos, *mins, apps_all, min_all, sub_in, sub_out, *gv,
+            first[0], first[1], last[0], last[1]]
+
+
+def build_players(full: bool = False, budget: int = 60):
+    """Player pages: minutes, first/last match, cards. Fetch missing ones, refresh active players daily and
+    everyone else after 30 days — at most `budget` stale refreshes per run (one page per DELAY)."""
+    db = json.loads((DATA / "db.json").read_text())
+    last_sid = max((s["id"] for s in db["seasons"][-2:]), default=0)
+    recent = {s["id"] for s in db["seasons"][-2:]}
+    old = json.loads(PLAYERS.read_text()) if PLAYERS.exists() else {}
+    rows, stamp = dict(old.get("players", {})), dict(old.get("fetched_at", {}))
+    today = dt.date.today()
+
+    def age(pid):
+        d = stamp.get(str(pid))
+        return (today - dt.date.fromisoformat(d)).days if d else 10**6
+    missing = [p[0] for p in db["players"] if str(p[0]) not in rows]
+    active = [p[0] for p in db["players"] if p[8] in recent and str(p[0]) in rows and age(p[0]) >= 1]
+    stale = sorted((p[0] for p in db["players"] if p[8] not in recent and str(p[0]) in rows and age(p[0]) >= 30),
+                   key=age, reverse=True)
+    todo = missing + active + (stale if full else stale[:budget])
+    log(f"players: {len(missing)} missing, {len(active)} active, {len(stale)} stale -> {len(todo)} fetches")
+    fails = 0
+
+    def save():
+        write_json(PLAYERS, {"source": "dbFCZ – www.dbfcz.ch (CC-BY 4.0)", "fields": PFIELDS,
+                             "players": rows, "fetched_at": stamp})
+    for n, pid in enumerate(todo, 1):
+        try:
+            r = parse_player(pid)
+            if str(pid) in rows and r[10] is None and rows[str(pid)][10] is not None:
+                raise RuntimeError("stats table vanished")
+            rows[str(pid)] = r
+            stamp[str(pid)] = today.isoformat()
+        except Exception as e:  # noqa: BLE001
+            fails += 1
+            log("player fail", pid, e)
+            if fails > 20 and fails > n // 2:
+                raise RuntimeError("too many player page failures, stopping") from e
+        if n % 100 == 0:  # checkpoint, so an aborted run keeps its progress
+            log(f"  {n}/{len(todo)}")
+            save()
+        time.sleep(DELAY)
+    save()
+    log(f"player_details.json: {len(rows)} players ({fails} failures), last season {last_sid}")
+
+
 # ----------------------------------------------------------------------------- forum
 def build_forum():
     t = fetch("https://fczforum.ch/forum")
@@ -423,7 +522,7 @@ def build_fotmob():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--full", action="store_true", help="crawl all dbFCZ seasons")
-    ap.add_argument("--only", help="comma list of steps: home,forum,fotmob,db,assemble")
+    ap.add_argument("--only", help="comma list of steps: home,forum,fotmob,db,assemble,players")
     a = ap.parse_args()
     steps = {
         "home": lambda: write_json(DATA / "dbfcz_home.json", parse_home()),
@@ -431,8 +530,9 @@ def main():
         "forum": build_forum,
         "fotmob": build_fotmob,
         "assemble": assemble_db,
+        "players": lambda: build_players(a.full),
     }
-    run = a.only.split(",") if a.only else ["home", "forum", "fotmob", "db"]
+    run = a.only.split(",") if a.only else ["home", "forum", "fotmob", "db", "players"]
     meta_p = DATA / "meta.json"
     meta = json.loads(meta_p.read_text()) if meta_p.exists() else {}
     ok = True

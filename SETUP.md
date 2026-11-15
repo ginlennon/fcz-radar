@@ -3,8 +3,9 @@
 ## Run locally
 ```bash
 python3 scraper/build.py --full                     # first time: crawl all dbFCZ seasons (~4 min, ~220 requests)
-python3 scraper/build.py                            # normal refresh (home, forum, fotmob, current seasons)
+python3 scraper/build.py                            # normal refresh (home, forum, fotmob, current seasons, players)
 python3 scraper/build.py --only home,forum,fotmob   # quick refresh
+python3 scraper/build.py --only players          # dbFCZ player pages (first run ~928 pages, ~20 min)
 python3 scraper/build.py --only assemble            # rebuild data/db.json from the season cache only
 python3 -m http.server 8917 --bind 127.0.0.1        # then open http://127.0.0.1:8917/
 ```

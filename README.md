@@ -23,6 +23,8 @@ It is not affiliated with FC Zürich. No club logo is used as branding.
   contain e-mail addresses), avatar URLs and post excerpts are never archived. Club crests are not hotlinked;
   neutral monograms are used instead. There are no cookies and no tracking. The footer links an issue tracker for
   takedown requests.
+- **Rank anything.** The Spieler tab is a sortable mask over the whole archive (games, goals, minutes, minutes per
+  goal, time at the club in weeks, age at debut, subs, cards) with position, decade and minimum-games filters.
 - **Phone first.** Bottom tab bar, bottom-sheet details, works offline (service worker), installable (PWA).
 - **Review process.** The draft went through three rounds of design and feature review by a Fable subagent
   (2026-11-14). Results: a match-day hero, combo search, a daily quiz, provisional FotMob results bridging the dbFCZ lag,

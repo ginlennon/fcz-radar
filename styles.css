@@ -285,3 +285,15 @@ table.t td:first-child,table.t th:first-child{white-space:nowrap;width:36px}
 .ca{background:var(--brand-2)} .cb{background:#f08c00}
 .lg.ca{background:var(--brand-2)} .lg.cb{background:#f08c00}
 .avatar.q{font-size:16px;color:var(--ink-3)}
+/* Rangliste (sortable mask) */
+.rk{display:flex;flex-direction:column;gap:10px}
+.rk .chips{margin:0 -14px;padding:0 14px 2px}
+.rk-line{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rk-line select{flex:1 1 0;min-width:0}
+.rk-lab{width:100%;font-size:12px;font-weight:700;color:var(--ink-2);margin-bottom:-4px}
+.rk-o{flex:none;min-height:40px}
+.rk #pf{width:100%}
+.rk-count{margin:0 0 4px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:14px 0 0;font-size:14px}
+.kv dt{color:var(--ink-2);font-weight:600}
+.kv dd{margin:0;min-width:0}
