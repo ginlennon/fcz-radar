@@ -33,5 +33,5 @@ dbFCZ team id 1 = FCZ.
 
 ## Front end
 A hash router (`#/heute`, `#/saison?t=`, `#/archiv?m=&c=&d=&o=&tag=`, `#/gegner/:id`, `#/saisonarchiv/:id`,
-`#/spieler`, `#/spieler/:id`, `#/forum`, `#/spiel/:id` as a bottom sheet). Search runs over an in-memory index
+`#/spieler`, `#/spieler/:id`, `#/vergleich/:a/:b` (0 = not chosen yet), `#/forum`, `#/spiel/:id` as a bottom sheet). Search runs over an in-memory index
 built on first open.

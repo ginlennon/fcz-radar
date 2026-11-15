@@ -352,7 +352,7 @@ function buildQuiz() {
   let A, B;
   for (let i = 0; i < 200; i++) { A = pick(top); B = pick(top); const r = Math.min(A[2], B[2]) / Math.max(A[2], B[2]); if (A !== B && r > 0.6 && r < 0.95) break; }
   const more = A[2] > B[2] ? A : B;
-  qs.push({ q: 'Wer hat mehr Pflichtspiele für den FCZ?', opts: [A[1], B[1]], a: more[1], link: `#/spieler/${more[0]}`, note: `${A[1]} ${A[2]} · ${B[1]} ${B[2]}` });
+  qs.push({ q: 'Wer hat mehr Pflichtspiele für den FCZ?', opts: [A[1], B[1]], a: more[1], link: `#/vergleich/${A[0]}/${B[0]}`, linkLabel: 'zum Vergleich', note: `${A[1]} ${A[2]} · ${B[1]} ${B[2]}` });
   // 3) all-time balance against an opponent
   const opp = pick(IX.oppSorted.filter(([id]) => id > 0).slice(0, 40))[0];
   const o = summarize(IX.byOpp[opp].filter((x) => x[0] > 0 && x[7] !== 'F' && x[1] < cutoff));
@@ -376,7 +376,7 @@ function quizCard() {
     return `<div class="qz"><div class="qq"><span class="pill">${i + 1}/3</span> ${esc(q.q)}</div><div class="qo">${q.opts.map((o) => {
       const cls = done ? (o === q.a ? 'ok' : o === ans ? 'bad' : 'dim') : '';
       return `<button type="button" class="qbtn ${cls}" ${done ? 'disabled' : `data-quiz="${i}" data-a="${esc(o)}"`}>${esc(o)}</button>`; }).join('')}</div>
-      ${done ? `<div class="s">${ans === q.a ? 'Richtig!' : 'Leider nein.'}${q.note ? ' ' + esc(q.note) + '.' : ''} <a href="${q.link}">mehr</a></div>` : ''}</div>`;
+      ${done ? `<div class="s">${ans === q.a ? 'Richtig!' : 'Leider nein.'}${q.note ? ' ' + esc(q.note) + '.' : ''} <a href="${q.link}">${q.linkLabel || 'mehr'} ›</a></div>` : ''}</div>`;
   }).join('');
   const fin = n === 3 ? `<div class="row between qfin"><b>${right}/3 · Serie ${st.streak} ${st.streak > 1 ? 'Tage' : 'Tag'}</b><button type="button" class="btn" data-quiz-share>${ICON.share} Teilen</button></div><div class="s muted">Morgen gibt es ein neues Quiz.</div>` : '';
   return `<section class="card quiz" id="quiz"><h2><span>Tagesquiz</span><span class="pill">${n}/3</span></h2>${rows}${fin}</section>`;
@@ -598,6 +598,7 @@ function renderSpieler(q) {
   const chips = Object.entries(SORTS).map(([k, [, l]]) => `<a class="chip ${sort === k ? 'on' : ''}" href="#/spieler?s=${k}${f ? '&f=' + encodeURIComponent(f) : ''}">${l === 'Spiele' ? 'Pflichtspiele' : l === 'Liga' ? 'Ligaspiele' : l}</a>`).join('');
   const hof = (S.home?.hall_of_fame || []).filter((h) => IX.player[h.id]);
   view.innerHTML = `<h1 class="page-title">Spieler</h1><p class="sub gap">${fmtN(S.db.players.length)} Spieler mit Einsätzen im Archiv · Quelle dbFCZ</p>
+  <a class="btn primary morebtn" style="margin-bottom:12px" href="#/vergleich/0/0">⇄ Zwei Spieler vergleichen</a>
   ${hof.length ? card('Hall of Fame (FCZ-Museum)', `<div class="chips">${hof.map((h) => `<a class="chip" href="#/spieler/${h.id}">${esc(h.name)}</a>`).join('')}</div>`) : ''}
   <input type="search" id="pf" placeholder="Name filtern …" value="${esc(f)}" aria-label="Spieler filtern" style="width:100%;margin-bottom:10px">
   <div class="chips">${chips}</div>
@@ -630,6 +631,7 @@ async function renderPlayer(id, seq) {
       <a href="${dbfczUrl('spieler', id)}" target="_blank" rel="noopener">${ICON.db} dbFCZ-Profil</a>
       <a href="${thread ? forumTopic(thread[0]) : googleForum(p[1])}" target="_blank" rel="noopener">${ICON.chat} ${thread ? 'Spielerthread' : 'Im Forum suchen'}</a>
       ${sq ? `<a href="https://www.fotmob.com/players/${sq.id}" target="_blank" rel="noopener">${ICON.ext} FotMob</a>` : ''}
+      <a href="#/vergleich/${id}/0">⇄ Vergleichen</a>
       <button type="button" data-share>${ICON.share} Teilen</button></div>`)}${foot()}`;
   wikiCard(p[1], seq);
   const ps = (await playerSeasons())[id] || [];
@@ -656,6 +658,102 @@ async function wikiCard(name, seq) {
   if (seq !== routeSeq) return;
   const el = $('#wiki'); if (el) el.innerHTML = html;
 }
+
+// ---------------------------------------------------------------- Vergleich: Spieler A vs Spieler B
+function pickerHTML(side, other) {
+  return `<div class="picker" data-side="${side}"><input type="search" class="pick" data-side="${side}" placeholder="Spieler ${side === 'a' ? 'A' : 'B'} suchen …" aria-label="Spieler ${side === 'a' ? 'A' : 'B'} wählen" autocomplete="off">
+    <ul class="list pick-res" id="pick-${side}"></ul></div>`;
+}
+function pickResults(qv, other) {
+  const n = norm(qv); if (n.length < 2) return '';
+  const ws = n.split(' ');
+  return S.db.players.filter((p) => p[0] !== other && ws.every((w) => norm(p[1]).split(' ').some((x) => x.startsWith(w))))
+    .slice(0, 6).map((p) => `<li><button type="button" class="item pickbtn" data-pid="${p[0]}"><span class="grow"><div class="t">${esc(p[1])}</div><div class="s">${p[2]} Pflichtspiele · ${seasonLabel(p[7]).slice(0, 4)}–${seasonLabel(p[8]).slice(-4)}</div></span>${ICON.chev}</button></li>`).join('')
+    || '<div class="empty">kein Spieler gefunden</div>';
+}
+function suggestOpponents(p) { // same era, similar standing
+  const a0 = IX.season[p[7]]?.i ?? 0, a1 = IX.season[p[8]]?.i ?? 0;
+  return S.db.players.filter((x) => x[0] !== p[0] && (IX.season[x[8]]?.i ?? 0) >= a0 - 2 && (IX.season[x[7]]?.i ?? 0) <= a1 + 2)
+    .sort((x, y) => Math.abs(x[2] - p[2]) - Math.abs(y[2] - p[2])).slice(0, 6);
+}
+function cmpRow(label, va, vb, fmt = (v) => v, lowerWins = false) {
+  const max = Math.max(va, vb) || 1, min = Math.min(va, vb) || 1;
+  const win = va === vb ? '' : (va > vb) !== lowerWins ? 'a' : 'b';
+  const w = (v) => (lowerWins ? 100 * min / (v || 1) : 100 * v / max); // ranks: smaller = better = longer bar
+  return `<div class="cmp-row"><div class="cmp-v ${win === 'a' ? 'win' : ''}">${fmt(va)}</div><div class="cmp-mid"><div class="cmp-l">${label}</div>
+    <div class="cmp-bars"><span class="ba"><i style="width:${w(va)}%" class="${win === 'a' ? 'win' : ''}"></i></span><span class="bb"><i style="width:${w(vb)}%" class="${win === 'b' ? 'win' : ''}"></i></span></div></div>
+    <div class="cmp-v r ${win === 'b' ? 'win' : ''}">${fmt(vb)}</div></div>`;
+}
+async function renderVergleich(ida, idb, seq) {
+  const A = IX.player[ida], B = IX.player[idb];
+  const head = (p, side, other) => p
+    ? `<div class="cmp-p"><a href="#/spieler/${p[0]}">${avatar(p[1])}<b>${esc(p[1])}</b></a><span class="s">${esc(seasonLabel(p[7]).slice(0, 4))}–${esc(seasonLabel(p[8]).slice(-4))}</span>
+       <a class="ghost small" href="#/vergleich/${side === 'a' ? `0/${other || 0}` : `${other || 0}/0`}">ändern</a></div>`
+    : `<div class="cmp-p"><span class="avatar q">?</span><b class="muted">Spieler ${side === 'a' ? 'A' : 'B'}</b><span class="s">wählen ↓</span></div>`;
+  let body = '';
+  if (A && B) {
+    const rk = (p) => S.db.players.filter((x) => x[2] > p[2]).length + 1;
+    const gk = (p) => S.db.players.filter((x) => x[4] > p[4]).length + 1;
+    const rows = [
+      ['Pflichtspiele', A[2], B[2]], ['Pflichtspieltore', A[4], B[4]], ['Ligaspiele', A[3], B[3]], ['Ligatore', A[5], B[5]],
+      ['Tore pro Pflichtspiel', A[2] ? A[4] / A[2] : 0, B[2] ? B[4] / B[2] : 0, (v) => v.toFixed(2)],
+      ['Saisons', A[9], B[9]], ['Testspiele', A[6], B[6]],
+    ];
+    let wa = 0, wb = 0;
+    for (const [, x, y] of rows) { if (x > y) wa++; else if (y > x) wb++; }
+    const lead = wa === wb ? `Unentschieden: je ${wa} Kategorien` : `<b>${esc((wa > wb ? A : B)[1])}</b> liegt in ${Math.max(wa, wb)} von ${rows.length} Kategorien vorne`;
+    body = card('Direktvergleich', `<div class="cmp-lead">${lead}</div>${rows.map(([l, x, y, f]) => cmpRow(l, x, y, f)).join('')}
+      ${cmpRow('All-time-Rang Pflichtspiele', rk(A), rk(B), (v) => '#' + v, true)}${cmpRow('All-time-Rang Tore', gk(A), gk(B), (v) => '#' + v, true)}`)
+      + `<div id="cmp-career">${loadingCard('Karriere im Vergleich')}</div>`
+      + card('Mehr', `<div class="ext"><a href="#/vergleich/${B[0]}/${A[0]}">⇄ Seiten tauschen</a><button type="button" data-share>${ICON.share} Vergleich teilen</button>
+        <a href="${dbfczUrl('spieler', A[0])}" target="_blank" rel="noopener">${ICON.db} ${esc(A[1].split(' ').pop())} bei dbFCZ</a><a href="${dbfczUrl('spieler', B[0])}" target="_blank" rel="noopener">${ICON.db} ${esc(B[1].split(' ').pop())} bei dbFCZ</a></div>`);
+  } else {
+    const p = A || B;
+    const sug = p ? suggestOpponents(p) : S.db.players.slice(0, 8);
+    body = card(p ? `Vorschläge: Zeitgenossen von ${esc(p[1])}` : 'Beliebt: die Rekordspieler', `<div class="chips flush">${sug.map((x) => `<a class="chip" href="#/vergleich/${p ? (A ? `${A[0]}/${x[0]}` : `${x[0]}/${B[0]}`) : `${x[0]}/0`}">${esc(x[1])}</a>`).join('')}</div>
+      <p class="hint" style="margin-top:10px">Tipp: Auf jeder Spielerseite gibt es den Knopf „Vergleichen“, und die Suche versteht <code>Kuhn vs Grob</code>.</p>`);
+  }
+  view.innerHTML = `<h1 class="page-title">Spielervergleich</h1><p class="sub gap">Alle Zahlen für den FCZ · Quelle dbFCZ</p>
+    <section class="card cmp-head">${head(A, 'a', idb)}<div class="cmp-vs">vs</div>${head(B, 'b', ida)}</section>
+    ${!A ? card('Spieler A wählen', pickerHTML('a', idb)) : !B ? card('Spieler B wählen', pickerHTML('b', ida)) : ''}${body}${foot()}`;
+  const pk = $('.pick'); if (pk && !(A || B)) setTimeout(() => pk.focus(), 50);
+  if (!(A && B)) return;
+  const ps = await playerSeasons();
+  if (seq !== routeSeq) return;
+  const ra = ps[A[0]] || [], rb = ps[B[0]] || [];
+  const idx = (r) => IX.season[r[0]]?.i ?? 0;
+  const lo = Math.min(...[...ra, ...rb].map(idx)), hi = Math.max(...[...ra, ...rb].map(idx));
+  const ma = Object.fromEntries(ra.map((r) => [r[0], r])), mb = Object.fromEntries(rb.map((r) => [r[0], r]));
+  const max = Math.max(1, ...ra.map((r) => r[1]), ...rb.map((r) => r[1]));
+  const cols = [];
+  for (let i = lo; i <= hi; i++) {
+    const s = S.db.seasons[i]; const x = ma[s.id], y = mb[s.id];
+    cols.push(`<a class="cc" href="#/saisonarchiv/${s.id}" title="${esc(s.label)}: ${esc(A[1])} ${x ? x[1] : 0}, ${esc(B[1])} ${y ? y[1] : 0} Pflichtspiele"><i class="ca" style="height:${x ? Math.max(3, 100 * x[1] / max) : 0}%"></i><i class="cb" style="height:${y ? Math.max(3, 100 * y[1] / max) : 0}%"></i></a>`);
+  }
+  const both = ra.filter((r) => mb[r[0]]);
+  const el = $('#cmp-career'); if (!el) return;
+  el.innerHTML = card('Karriere im Vergleich', `<div class="legend small"><span><i class="lg ca"></i> ${esc(A[1])}</span><span><i class="lg cb"></i> ${esc(B[1])}</span></div>
+    <div class="cmp-chart" aria-label="Pflichtspiele pro Saison">${cols.join('')}</div>
+    <div class="row between small muted"><span>${esc(S.db.seasons[lo].label)}</span><span>Pflichtspiele pro Saison</span><span>${esc(S.db.seasons[hi].label)}</span></div>`)
+    + card(both.length ? `Gemeinsam beim FCZ: ${both.length} ${both.length === 1 ? 'Saison' : 'Saisons'}` : 'Gemeinsam beim FCZ', both.length
+      ? `<table class="t"><thead><tr><th></th><th>Saison</th><th>${esc(A[1].split(' ').pop())}</th><th>${esc(B[1].split(' ').pop())}</th></tr></thead><tbody>
+        ${both.map((r) => `<tr><td></td><td><a href="#/saisonarchiv/${r[0]}">${esc(seasonLabel(r[0]))}</a></td><td>${r[1]} Sp · ${r[6]} T</td><td>${mb[r[0]][1]} Sp · ${mb[r[0]][6]} T</td></tr>`).join('')}</tbody></table>`
+      : `<div class="hint">Die beiden standen nie in derselben Saison im Kader.${Math.abs(idx(ra[0] || [0]) - idx(rb[0] || [0])) > 0 ? '' : ''}</div>`);
+}
+// picker interactions (delegated)
+document.addEventListener('input', (e) => {
+  const inp = e.target.closest('.pick'); if (!inp) return;
+  const parts = location.hash.slice(2).split('?')[0].split('/');
+  const other = inp.dataset.side === 'a' ? +parts[2] || 0 : +parts[1] || 0;
+  $('#pick-' + inp.dataset.side).innerHTML = pickResults(inp.value, other);
+});
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('.pickbtn'); if (!b) return;
+  const side = b.closest('.picker').dataset.side;
+  const parts = location.hash.slice(2).split('?')[0].split('/');
+  const a = side === 'a' ? b.dataset.pid : parts[1] || 0, bb = side === 'b' ? b.dataset.pid : parts[2] || 0;
+  location.hash = `#/vergleich/${a}/${bb}`;
+});
 
 // ---------------------------------------------------------------- Forum
 function topicList(filt) {
@@ -725,7 +823,7 @@ function buildSearch() {
   for (const s of S.db.seasons) E.push({ g: 'Saisons', t: 'Saison ' + s.label, s: [s.league, s.rank ? 'Rang ' + s.rank : '', s.note].filter(Boolean).join(' · '), h: '#/saisonarchiv/' + s.id, k: norm(s.label + ' ' + s.label.replace(/(\d{2})(\d{2})\/(\d{2})(\d{2})/, '$2/$4') + ' ' + (s.note || '')), w: 2 });
   for (const [slug, t] of Object.entries(S.arch?.topics || {})) E.push({ g: 'Forum-Themen', t: t.title, s: `${t.forum || ''} · ${rel(t.lastPost || t.last)}`, h: forumTopic(slug), ext: true, k: norm(t.title), w: 1.5 });
   const gc = findTeam('Grasshoppers');
-  const pages = [['Tabelle', '#/saison?t=tabelle', 'tabelle rangliste'], ['Spielplan', '#/saison?t=spiele', 'spielplan fixtures kalender termine'], ['Kader', '#/saison?t=kader', 'kader team squad'], ['Rekorde & Serien', '#/archiv?m=rekorde', 'rekorde serien hoechste siege zeitmaschine'], ['Platzierungen aller Saisons', '#/archiv?m=saisons', 'saisons platzierungen meister titel'], ['Stadtderby FCZ – GC', '#/gegner/' + gc, 'derby stadtderby'], ['Tagesquiz', '#/heute', 'quiz tagesquiz raten'], ['Forum-Puls', '#/forum', 'forum stimmung trending']];
+  const pages = [['Tabelle', '#/saison?t=tabelle', 'tabelle rangliste'], ['Spielplan', '#/saison?t=spiele', 'spielplan fixtures kalender termine'], ['Kader', '#/saison?t=kader', 'kader team squad'], ['Rekorde & Serien', '#/archiv?m=rekorde', 'rekorde serien hoechste siege zeitmaschine'], ['Platzierungen aller Saisons', '#/archiv?m=saisons', 'saisons platzierungen meister titel'], ['Stadtderby FCZ – GC', '#/gegner/' + gc, 'derby stadtderby'], ['Tagesquiz', '#/heute', 'quiz tagesquiz raten'], ['Spielervergleich', '#/vergleich/0/0', 'vergleich vergleichen versus duell spieler'], ['Forum-Puls', '#/forum', 'forum stimmung trending']];
   for (const [t, h, k] of pages) E.push({ g: 'Seiten', t, s: 'Bereich der App', h, k, w: 3 });
   searchIndex = E;
 }
@@ -794,6 +892,17 @@ function search(qs) {
     const ms = S.db.matches.filter((x) => x[1]?.slice(5) === md && (!y || x[1].startsWith(y)));
     out.push({ g: y ? `Spiele am ${q}` : `Spiele an einem ${m[1]}.${m[2]}.`, items: ms.slice(-12).reverse().map((x) => ({ match: x })), all: ms.length > 12 ? `#/archiv?tag=${md}` : null, n: ms.length });
     return out;
+  }
+  // "Kuhn vs Grob" / "Kuhn gegen Grob" -> player comparison
+  const vs = q.match(/^(.+?)\s+(?:vs\.?|versus|gegen|–|-)\s+(.+)$/i);
+  if (vs) {
+    const best = (t) => { const ws = norm(t).split(' '); return S.db.players.filter((p) => ws.every((w) => norm(p[1]).split(' ').some((x) => x.startsWith(w))))[0]; };
+    const pa = best(vs[1]), pb = best(vs[2]);
+    if (pa && pb && pa !== pb) {
+      out.push({ g: 'Spielervergleich', answer: `<section class="card answer"><a class="row between" href="#/vergleich/${pa[0]}/${pb[0]}"><b>${esc(pa[1])}</b><span class="pill">vs</span><b style="text-align:right">${esc(pb[1])}</b></a>
+        <div class="row between small muted" style="margin-top:6px"><span>${pa[2]} Sp · ${pa[4]} T</span><a href="#/vergleich/${pa[0]}/${pb[0]}">Vergleich öffnen ›</a><span>${pb[2]} Sp · ${pb[4]} T</span></div></section>`, items: [] });
+      return out;
+    }
   }
   // combos: opponent + year/decade + score + competition + venue (+ leftover words matched against competition names)
   const { f, rest } = parseCombo(q);
@@ -894,13 +1003,13 @@ function applyTheme() { const t = store.get('theme', 'auto'); if (t === 'auto') 
 
 // ---------------------------------------------------------------- router
 let lastHash = null, navDepth = 0;
-const NEEDS_DB = new Set(['archiv', 'gegner', 'saisonarchiv', 'spieler', 'spiel', 'suche']);
+const NEEDS_DB = new Set(['archiv', 'gegner', 'saisonarchiv', 'spieler', 'spiel', 'suche', 'vergleich']);
 function route() {
   const h = location.hash.slice(2) || 'heute';
   const [path, qs] = h.split('?');
   const q = new URLSearchParams(qs || '');
   const [a, b] = path.split('/');
-  const tab = { heute: 'heute', saison: 'saison', archiv: 'archiv', gegner: 'archiv', saisonarchiv: 'archiv', spieler: 'spieler', forum: 'forum' }[a];
+  const tab = { heute: 'heute', saison: 'saison', archiv: 'archiv', gegner: 'archiv', saisonarchiv: 'archiv', spieler: 'spieler', vergleich: 'spieler', forum: 'forum' }[a];
   if (a === 'suche') {
     closeSheet(); layer.hidden = false; document.body.classList.add('locked');
     if (qi.value !== (q.get('q') || '')) qi.value = q.get('q') || '';
@@ -922,7 +1031,7 @@ function renderMain(a, b, q, tab) {
   clearInterval(timer);
   const seq = ++routeSeq;
   document.querySelectorAll('#tabs a').forEach((x) => x.classList.toggle('on', x.dataset.tab === (tab || 'heute')));
-  const titles = { heute: 'Heute', saison: 'Saison', archiv: 'Archiv', spieler: 'Spieler', forum: 'Forum', gegner: 'Gegner', saisonarchiv: 'Saison' };
+  const titles = { heute: 'Heute', saison: 'Saison', archiv: 'Archiv', spieler: 'Spieler', forum: 'Forum', gegner: 'Gegner', saisonarchiv: 'Saison', vergleich: 'Vergleich' };
   document.title = `FCZ Radar · ${titles[a] || 'Heute'}`;
   view.dataset.r = a || 'heute';
   if (NEEDS_DB.has(a) && !S.db) { view.innerHTML = loadingCard('Archiv lädt …'); dbReady.then(() => { if (seq === routeSeq) { if (S.db) renderMain(a, b, q, tab); else view.innerHTML = errCard('Archiv'); } }); return; }
@@ -930,6 +1039,7 @@ function renderMain(a, b, q, tab) {
   else if (a === 'archiv') renderArchiv(q);
   else if (a === 'gegner') renderGegner(+b);
   else if (a === 'saisonarchiv') renderSaisonArchiv(+b, seq);
+  else if (a === 'vergleich') { const p = location.hash.slice(2).split('?')[0].split('/'); renderVergleich(+p[1] || 0, +p[2] || 0, seq); }
   else if (a === 'spieler' && b) renderPlayer(+b, seq);
   else if (a === 'spieler') renderSpieler(q);
   else if (a === 'forum') renderForum(q);

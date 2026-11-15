@@ -255,3 +255,33 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .mono.big.fcz{font-size:24px;border-width:3px}
 .hero .mono{background:#fff;color:#0e3f86;border-color:#fff}
 table.t td:first-child,table.t th:first-child{white-space:nowrap;width:36px}
+/* player comparison */
+.cmp-head{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:start}
+.cmp-p{display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;min-width:0}
+.cmp-p > a:first-child{display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--ink)}
+.cmp-p b{font-size:15px;line-height:1.2;word-break:break-word}
+.cmp-p .ghost{padding:2px 6px}
+.cmp-p.empty-p{align-items:stretch}
+.cmp-vs{align-self:center;font-weight:800;color:var(--ink-3);font-size:13px}
+.picker input{width:100%}
+.pick-res .item{width:100%;background:none;border:0;text-align:left;cursor:pointer;padding:8px 2px}
+.pick-res .item .t{font-size:14px}
+.cmp-lead{background:var(--surface-2);border-radius:10px;padding:8px 10px;margin-bottom:6px;font-size:14px}
+.cmp-row{display:grid;grid-template-columns:62px 1fr 62px;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
+.cmp-row:first-of-type{border-top:0}
+.cmp-v{font-weight:700;font-size:16px;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.cmp-v.r{text-align:right}
+.cmp-v.win{color:var(--ink);font-weight:900}
+.cmp-l{font-size:12px;color:var(--ink-2);text-align:center;margin-bottom:4px}
+.cmp-bars{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+.cmp-bars span{height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden;display:flex}
+.cmp-bars .ba{justify-content:flex-end}
+.cmp-bars i{display:block;height:100%;border-radius:4px;opacity:.55}
+.cmp-bars .ba i{background:var(--brand-2)} .cmp-bars .bb i{background:#f08c00}
+.cmp-bars i.win{opacity:1}
+.cmp-chart{display:flex;align-items:flex-end;gap:2px;height:90px;margin:8px 0 4px}
+.cmp-chart .cc{flex:1;display:flex;align-items:flex-end;gap:1px;height:100%;min-width:0}
+.cmp-chart .cc i{flex:1;display:block;border-radius:2px 2px 0 0}
+.ca{background:var(--brand-2)} .cb{background:#f08c00}
+.lg.ca{background:var(--brand-2)} .lg.cb{background:#f08c00}
+.avatar.q{font-size:16px;color:var(--ink-3)}
