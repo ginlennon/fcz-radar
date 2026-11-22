@@ -14,9 +14,15 @@ Python 3.10+ with the standard library only. No pip installs are needed.
 ## Deploy
 - Repo `ginlennon/fcz-radar` is **public**. GitHub Pages serves branch `main` from the root at
   https://ginlennon.github.io/fcz-radar/.
-- `.github/workflows/update-data.yml` runs hourly, every 6h and weekly (see the cron comments). It commits `data/` only
-  when something changed. It needs `permissions: contents: write` and the built-in token, nothing else.
-- Trigger by hand with `gh workflow run update-data -f mode=full|seasons|quick`.
+- `.github/workflows/update-data.yml` (commits `data/` only when something changed; needs `permissions: contents:
+  write` and the built-in token, nothing else):
+  - every 6h: forum, FotMob, dbFCZ home + current seasons; weekly (Mon 03:23 UTC): full dbFCZ re-crawl.
+  - every 30 min a `gate` job runs `scraper/postmatch_window.py`: from kickoff+2h to kickoff+8h of an FCZ match
+    (kickoffs from `data/fotmob.json`) it does a quick refresh (home, forum, fotmob); otherwise it stops in ~5 s.
+    GitHub drops many scheduled runs, so expect roughly hourly refreshes in the window, not every 30 min.
+  - Test the window: `python3 scraper/postmatch_window.py --now 2026-11-08T19:00Z`.
+- Trigger by hand with `gh workflow run update-data.yml -R ginlennon/fcz-radar -f mode=quick|seasons|full`, or from the
+  GitHub mobile app: Actions → update-data → Run workflow.
 - GitHub disables scheduled workflows after 60 days without repo activity. The data commits normally keep it
   alive. If it stops, re-enable it in the Actions tab.
 

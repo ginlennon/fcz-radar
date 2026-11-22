@@ -2,8 +2,8 @@ name: update-data
 # Refreshes data/*.json from public sources. Uses only the built-in GITHUB_TOKEN — no secrets.
 on:
   schedule:
-    - cron: "17 * * * *"      # hourly: forum index, FotMob, dbFCZ home page
-    - cron: "41 */6 * * *"    # every 6h: + current dbFCZ seasons
+    - cron: "7,37 * * * *"    # every 30 min: gate only — quick refresh during the 6h after an FCZ match
+    - cron: "41 */6 * * *"    # every 6h: forum, FotMob, dbFCZ home + current seasons
     - cron: "23 3 * * 1"      # weekly (Mon 03:23 UTC): full dbFCZ re-crawl
   workflow_dispatch:
     inputs:
@@ -16,7 +16,35 @@ concurrency:
   group: update-data
   cancel-in-progress: false
 jobs:
+  # Decides the mode. Outside a post-match window the 30-min schedule stops here (~5 s, no requests).
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            data/fotmob.json
+            scraper/postmatch_window.py
+          sparse-checkout-cone-mode: false
+      - id: decide
+        env:
+          SCHED: ${{ github.event.schedule }}
+          MODE: ${{ github.event.inputs.mode }}
+        run: |
+          if [ "$SCHED" = "23 3 * * 1" ]; then mode=full
+          elif [ "$SCHED" = "41 */6 * * *" ]; then mode=seasons
+          elif [ -n "$MODE" ]; then mode=$MODE
+          elif python3 scraper/postmatch_window.py; then mode=quick
+          else mode=skip
+          fi
+          echo "mode=$mode" | tee -a "$GITHUB_OUTPUT"
+
   update:
+    needs: gate
+    if: needs.gate.outputs.mode != 'skip'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -24,19 +52,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build data
+      - name: Build data (${{ needs.gate.outputs.mode }})
         env:
-          SCHED: ${{ github.event.schedule }}
-          MODE: ${{ github.event.inputs.mode }}
+          MODE: ${{ needs.gate.outputs.mode }}
         run: |
           rc=0
-          if [ "$SCHED" = "23 3 * * 1" ] || [ "$MODE" = "full" ]; then
-            python scraper/build.py --full || rc=$?
-          elif [ "$SCHED" = "41 */6 * * *" ] || [ "$MODE" = "seasons" ]; then
-            python scraper/build.py || rc=$?
-          else
-            python scraper/build.py --only home,forum,fotmob || rc=$?
-          fi
+          case "$MODE" in
+            full)    python scraper/build.py --full || rc=$? ;;
+            seasons) python scraper/build.py || rc=$? ;;
+            *)       python scraper/build.py --only home,forum,fotmob || rc=$? ;;
+          esac
           echo "BUILD_RC=$rc" >> "$GITHUB_ENV"
       - name: Commit if changed
         run: |
